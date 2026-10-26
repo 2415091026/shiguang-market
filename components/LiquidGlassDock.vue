@@ -3,191 +3,160 @@
 		class="liquid-dock"
 		:class="[
 			`theme-${effectiveTheme}`,
-			`state-${interactionState}`,
 			{
 				'has-safe-area': safeArea,
 				'is-disabled': disabled,
-				'is-lens-visible': isLensVisible
+				'is-pressing': isPressing,
+				'is-dragging': isDragging
 			}
 		]"
 		:style="containerStyle"
 	>
-		<!-- H5 专属静态 SVG 光学折射滤镜（仅挂载一次，作用于透镜内部前景内容层，产生边缘弯曲拉伸折射） -->
-		<!-- #ifdef H5 -->
+		<!-- 内嵌 SVG 滤镜：采用跑道型胶囊 (Stadium) 边缘弯月面折射贴图，严格匹配胶囊宽高比 -->
 		<svg
+			id="liquid-lens-svg"
 			class="liquid-dock__svg-defs"
 			width="0"
 			height="0"
-			viewBox="0 0 124 78"
+			:viewBox="`0 0 ${Math.round(currentLensWidth)} ${Math.round(currentLensHeight)}`"
 			aria-hidden="true"
 			focusable="false"
 		>
 			<defs>
 				<filter
-					:id="svgFilterId"
-					x="-10%"
-					y="-10%"
-					width="120%"
-					height="120%"
+					id="sphere-rim-refraction"
+					x="-8%"
+					y="-8%"
+					width="116%"
+					height="116%"
 					filterUnits="objectBoundingBox"
 					primitiveUnits="userSpaceOnUse"
 					color-interpolation-filters="sRGB"
 				>
 					<feImage
-						:href="displacementMapDataUri"
-						:xlink:href="displacementMapDataUri"
+						:href="rimDisplacementDataUrl"
+						:xlink:href="rimDisplacementDataUrl"
 						x="0"
 						y="0"
-						width="124"
-						height="78"
+						:width="Math.round(currentLensWidth)"
+						:height="Math.round(currentLensHeight)"
 						preserveAspectRatio="none"
-						result="lensDispMap"
+						result="rimDispMap"
 					/>
 					<feDisplacementMap
 						in="SourceGraphic"
-						in2="lensDispMap"
-						:scale="LENS_CONFIG.refractionScale"
+						in2="rimDispMap"
+						:scale="DOCK_CONFIG.rimRefractionScale"
 						xChannelSelector="R"
 						yChannelSelector="G"
-						result="refractedMain"
+						result="refractedOutput"
 					/>
 				</filter>
 			</defs>
 		</svg>
-		<!-- #endif -->
 
-		<!-- 悬浮液态玻璃主胶囊容器 -->
+		<!-- 外层 iOS 26 液态玻璃长胶囊底栏 (overflow: visible 允许按住时水滴凸透镜上下破界悬浮) -->
 		<view
 			id="liquidDockSurface"
 			ref="surfaceRef"
 			class="liquid-dock__surface"
 			:style="surfaceStyle"
-			@mouseenter="handleSurfaceMouseEnter"
-			@mousemove="handleSurfaceMouseMove"
-			@mouseleave="handleSurfaceMouseLeave"
+			@mousedown="handleMouseDown"
 			@touchstart="handleTouchStart"
-			@touchmove="handleTouchMove"
+			@touchmove.stop.prevent="handleTouchMove"
 			@touchend="handleTouchEnd"
 			@touchcancel="handleTouchCancel"
 		>
-			<!-- 1. 极细微玻璃内折射边（还原图2干净纯粹的苹果原生液态玻璃边缘） -->
-			<view class="liquid-dock__glass-bevel" pointer-events="none"></view>
-
-			<!-- 2. 共享连续移动的 Active 高亮层 (.liquid-dock__active-indicator)
-			     外层负责平滑 translate3d 连续位移，内层负责三阶段液态拉伸与回缩形变，互不覆盖 transform -->
-			<view
-				v-if="items && items.length > 0"
-				class="liquid-dock__active-indicator"
-				:class="{
-					'is-ready': isIndicatorReady,
-					'is-under-lens': isLensActive
-				}"
-				:style="activeIndicatorTrackStyle"
-				pointer-events="none"
-			>
-				<view
-					class="liquid-dock__active-indicator-body"
-					:class="`phase-${indicatorPhase}`"
-					:style="activeIndicatorBodyStyle"
-				>
-					<view class="liquid-dock__active-indicator-highlight"></view>
-				</view>
+			<!-- 1. 底栏玻璃背景与双层内折光高光边（独立裁剪圆角，不裁剪破界水滴） -->
+			<view class="liquid-dock__surface-glass" pointer-events="none">
+				<view class="liquid-dock__glass-rim"></view>
 			</view>
 
-			<!-- 3. 底层原始导航项目列表（负责正常展示与点击交互；Icon 缩放与颜色过渡通过独立包装层协调） -->
-			<view class="liquid-dock__items-layer">
+			<!-- 2. 底层默认导航项（Normal Layer）：未覆盖区域显示深邃纯黑 (#1C1C1E) 图标与文字
+			     通过动态遮罩实时挖空当前胶囊/水滴覆盖区，实现跨 Tab 半蓝半黑无缝裁切 -->
+			<view
+				class="liquid-dock__items-layer"
+				:style="normalLayerMaskStyle"
+			>
 				<view
 					v-for="(item, index) in items"
 					:key="item.key || index"
 					class="liquid-dock__item"
 					:class="{
-						'is-active': activeItemKey === item.key,
-						'is-lens-covered': isLensActive && hoveredIndex === index,
 						'is-disabled': item.disabled
 					}"
-					:style="getBaseItemStyle(index)"
-					@mouseenter="handleItemMouseEnter(index, $event)"
+					:style="getItemSlotStyle()"
 					@click="handleItemClick(item, index)"
 				>
-					<!-- 独立负责图标轻微缩放 (1.06x) 的内部包装层，不产生上下跳动，也不与透镜 transform 冲突 -->
-					<view class="liquid-dock__icon-scale">
-						<view class="liquid-dock__icon-wrapper">
-							<image
-								class="liquid-dock__icon liquid-dock__icon--default"
-								:class="{ 'is-hidden': activeItemKey === item.key }"
-								:src="getDefaultIconSrc(item)"
-								mode="aspectFit"
-							/>
-							<image
-								class="liquid-dock__icon liquid-dock__icon--active"
-								:class="{ 'is-visible': activeItemKey === item.key }"
-								:src="getActiveIconSrc(item)"
-								mode="aspectFit"
-							/>
+					<view class="liquid-dock__icon-wrapper">
+						<image
+							class="liquid-dock__icon"
+							:src="getRenderedIconSrc(item, 'normal')"
+							mode="aspectFit"
+						/>
 
-							<!-- 徽标 Badge -->
-							<view
-								v-if="hasBadge(item.badge)"
-								class="liquid-dock__badge"
-								:class="{ 'is-dot': isDotBadge(item.badge) }"
-							>
-								<text v-if="!isDotBadge(item.badge)" class="liquid-dock__badge-text">
-									{{ formatBadge(item.badge) }}
-								</text>
-							</view>
+						<view
+							v-if="hasBadge(item.badge)"
+							class="liquid-dock__badge"
+							:class="{ 'is-dot': isDotBadge(item.badge) }"
+						>
+							<text v-if="!isDotBadge(item.badge)" class="liquid-dock__badge-text">
+								{{ formatBadge(item.badge) }}
+							</text>
 						</view>
 					</view>
 
-					<text v-if="showLabel && item.label" class="liquid-dock__label">
+					<text v-if="showLabel && item.label" class="liquid-dock__label liquid-dock__label--normal">
 						{{ item.label }}
 					</text>
 				</view>
 			</view>
 
-			<!-- 4. 局部液态放大凸透镜覆盖层 (.liquid-dock__lens) -->
+			<!-- 3. 顶层双态液态透镜容器 (.liquid-dock__morph-lens)
+			     - 常态 (!isPressing)：图二同款内嵌式柔和浅灰胶囊 (高 54px，不超出底栏，内部 1.0x 锐利蓝字)
+			     - 按住/拖动态 (isPressing)：高德截图同款破界悬浮 3D 水滴凸透镜 (92x78px，上下超出底栏，中心 1.22x 清晰放大，仅球体边缘产生弧形折射与微色散光圈) -->
 			<view
 				v-if="items && items.length > 0"
-				class="liquid-dock__lens"
-				:class="[
-					`is-${interactionState}`,
-					`mode-${activeInputMode}`,
-					{ 'is-visible': isLensVisible }
-				]"
-				:style="lensOuterStyle"
-				aria-hidden="true"
+				class="liquid-dock__morph-lens"
+				:class="{
+					'is-ready': isReady,
+					'is-pressing': isPressing,
+					'is-dragging': isDragging
+				}"
+				:style="morphLensOuterStyle"
 				pointer-events="none"
 			>
-				<!-- 4.1 凸透镜玻璃材质基底（中央清澈透明，边缘具有凸透镜曲率折光、内阴影与受光高光） -->
-				<view class="liquid-dock__lens-backdrop"></view>
+				<!-- 3.1 材质基底：常态为柔和浅灰胶囊，按住态为高透立体水滴玻璃 -->
+				<view
+					class="liquid-dock__morph-backdrop"
+					:style="morphBackdropStyle"
+				></view>
 
-				<!-- 4.2 透镜内部局部放大与边缘折射变形视口（仅放大视觉副本，与底层坐标 1:1 实时同步锁定） -->
-				<view class="liquid-dock__lens-viewport" aria-hidden="true">
+				<!-- 3.2 内部裁剪与折射视口：渲染 #007AFF 亮蓝色高亮层 -->
+				<view class="liquid-dock__morph-viewport">
 					<view
-						class="liquid-dock__lens-refraction-stage"
-						:style="lensRefractionStageStyle"
+						class="liquid-dock__morph-refraction-stage"
+						:class="{ 'is-lens-active': isPressing }"
 					>
-						<view class="liquid-dock__lens-scene" :style="lensSceneStyle">
+						<view
+							class="liquid-dock__morph-track"
+							:class="{
+								'is-ready': isReady,
+								'is-dragging': isDragging
+							}"
+							:style="morphCloneTrackStyle"
+						>
 							<view
 								v-for="(item, index) in items"
-								:key="`lens-${item.key || index}`"
-								class="liquid-dock__item liquid-dock__item--clone"
-								:class="{
-									'is-active': lensVisualActiveKey === item.key,
-									'is-disabled': item.disabled
-								}"
-								:style="getCloneItemDistortionStyle(index)"
+								:key="`active-${item.key || index}`"
+								class="liquid-dock__item liquid-dock__item--active-clone"
+								:class="{ 'is-disabled': item.disabled }"
+								:style="getItemSlotStyle()"
 							>
 								<view class="liquid-dock__icon-wrapper">
 									<image
-										class="liquid-dock__icon liquid-dock__icon--default"
-										:class="{ 'is-hidden': lensVisualActiveKey === item.key }"
-										:src="getDefaultIconSrc(item)"
-										mode="aspectFit"
-									/>
-									<image
-										class="liquid-dock__icon liquid-dock__icon--active"
-										:class="{ 'is-visible': lensVisualActiveKey === item.key }"
-										:src="getActiveIconSrc(item)"
+										class="liquid-dock__icon"
+										:src="getRenderedIconSrc(item, 'active')"
 										mode="aspectFit"
 									/>
 
@@ -202,7 +171,7 @@
 									</view>
 								</view>
 
-								<text v-if="showLabel && item.label" class="liquid-dock__label">
+								<text v-if="showLabel && item.label" class="liquid-dock__label liquid-dock__label--active">
 									{{ item.label }}
 								</text>
 							</view>
@@ -210,11 +179,13 @@
 					</view>
 				</view>
 
-				<!-- 4.3 凸透镜多层光学表面：边缘轻微色散、明暗相间菲涅尔反射环、顶部与侧边高光 -->
-				<view class="liquid-dock__lens-chromatic-ring"></view>
-				<view class="liquid-dock__lens-rim-light"></view>
-				<view class="liquid-dock__lens-specular-top"></view>
-				<view class="liquid-dock__lens-specular-bottom"></view>
+				<!-- 3.3 高德截图同款：水滴球体专属光学层（仅在按住/拖动为凸透镜时显现） -->
+				<!-- 球体最外圈 14% 边缘棱镜色散环（中心完全透明，绝不污染中间的文字与图标） -->
+				<view class="liquid-dock__droplet-prism-rim"></view>
+				<!-- 球体顶部中央胶囊形高光反射小横条 -->
+				<view class="liquid-dock__droplet-top-pill-highlight"></view>
+				<!-- 球体底部边缘月牙反光与立体内描边 -->
+				<view class="liquid-dock__droplet-bevel-ring"></view>
 			</view>
 		</view>
 	</view>
@@ -224,38 +195,23 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, getCurrentInstance } from 'vue'
 
 /**
- * 集中管理的液态凸透镜与 Active 高亮层动画参数配置
- * 同时映射为根节点 CSS 自定义属性，便于样式层统一调节
+ * 双态液态玻璃配置：
+ * - 常态：内嵌浅灰胶囊 (宽 = slotWidth, 高 = 54px)
+ * - 按住/拖动态：严格保持未按住胶囊的宽高比 (slotWidth : 54)，按 pressScale 等比放大为破界跑道型水滴凸透镜
  */
-const LENS_CONFIG = {
-	// 透镜宽度与高度（单位 px，圆润椭圆形凸透镜轮廓）
-	lensWidth: 124,
-	lensHeight: 78,
-	// 透镜内部放大倍率（1.3 ~ 1.6 推荐范围内）
-	magnification: 1.42,
-	// 透镜边缘弯曲拉伸畸变强度
-	edgeDistortionStrength: 0.24,
-	// H5 SVG feDisplacementMap 边缘折射强度
-	refractionScale: 13,
-	// 透镜中心背景透明度
-	lensBgOpacity: 0.16,
-	// 透镜顶部与边缘高光强度
-	specularOpacity: 0.92,
-	// 透镜显示动画时长（120 ~ 200ms 推荐区间）
-	enterDuration: 150,
-	// 透镜跨 Icon 移动动画时长（140 ~ 220ms 推荐区间）
-	moveDuration: 170,
-	// 透镜隐藏动画时长（160 ~ 240ms 推荐区间）
-	leaveDuration: 190,
-	// Active 高亮层连续移动时长（220 ~ 320ms 推荐区间）
-	activeMoveDuration: 270,
-	// Icon 颜色过渡时长（180 ~ 260ms 推荐区间）
-	iconColorDuration: 210,
-	// Icon 缩放变形时长（200 ~ 280ms 推荐区间）
-	iconScaleDuration: 240
+const DOCK_CONFIG = {
+	dockHeight: 62,
+	pillInset: 4,
+	// 按住态等比膨胀系数（宽高同时乘以该系数，100% 保持与未按住胶囊相同的宽高比）
+	pressScale: 1.28,
+	// 按住态水滴透镜内图标与文字放大倍率
+	dropletMagnification: 1.24,
+	// 跑道型液态玻璃凸透镜的光学液化折射强度
+	rimRefractionScale: 36,
+	// 点击/松手回弹过渡时长 (ms)
+	moveDuration: 280
 }
 
-// 属性定义（完整保留现有导航 Props）
 const props = defineProps({
 	items: {
 		type: Array,
@@ -298,25 +254,25 @@ const props = defineProps({
 		type: String,
 		default: 'bottom'
 	},
+	theme: {
+		type: String,
+		default: 'auto'
+	},
 	showLabel: {
 		type: Boolean,
 		default: true
-	},
-	theme: {
-		type: String,
-		default: 'light'
-	},
-	disabled: {
-		type: Boolean,
-		default: false
 	},
 	safeArea: {
 		type: Boolean,
 		default: true
 	},
-	zIndex: {
-		type: [Number, String],
-		default: 999
+	blur: {
+		type: Number,
+		default: 24
+	},
+	disabled: {
+		type: Boolean,
+		default: false
 	},
 	maxWidth: {
 		type: String,
@@ -324,828 +280,635 @@ const props = defineProps({
 	}
 })
 
-// 事件派发
-const emit = defineEmits(['update:modelValue', 'change', 'itemClick'])
+const emit = defineEmits(['update:modelValue', 'change', 'item-click'])
 
 const instance = getCurrentInstance()
 const surfaceRef = ref(null)
-const svgFilterId = 'liquid-lens-refraction-filter'
 
 /**
- * 椭圆形凸透镜径向位移贴图 Data URI（中央 58% 区域保持 rgb(128,128,128) 零位移清晰，边缘平滑弯曲折射）
+ * 生成基于“跑道型胶囊有向距离场 (Stadium SDF)”的连续液态凸透镜折射贴图
+ * 让整个跑道型水滴具备真实、丝滑的光学液化拉伸与边缘弯月面弯曲效果（严格贴合胶囊宽高比，绝不变圆）
  */
-const displacementMapDataUri = computed(() => {
-	const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="124" height="78" viewBox="0 0 124 78">
-		<defs>
-			<linearGradient id="rx" x1="0%" y1="50%" x2="100%" y2="50%">
-				<stop offset="0%" stop-color="rgb(230,128,128)"/>
-				<stop offset="24%" stop-color="rgb(140,128,128)"/>
-				<stop offset="50%" stop-color="rgb(128,128,128)"/>
-				<stop offset="76%" stop-color="rgb(116,128,128)"/>
-				<stop offset="100%" stop-color="rgb(26,128,128)"/>
-			</linearGradient>
-			<radialGradient id="clearCenter" cx="50%" cy="50%" rx="50%" ry="50%">
-				<stop offset="0%" stop-color="rgb(128,128,128)" stop-opacity="1"/>
-				<stop offset="58%" stop-color="rgb(128,128,128)" stop-opacity="0.95"/>
-				<stop offset="85%" stop-color="rgb(128,128,128)" stop-opacity="0.22"/>
-				<stop offset="100%" stop-color="rgb(128,128,128)" stop-opacity="0"/>
-			</radialGradient>
-		</defs>
-		<rect width="124" height="78" rx="39" ry="39" fill="url(#rx)"/>
-		<ellipse cx="62" cy="39" rx="58" ry="36" fill="url(#clearCenter)"/>
-	</svg>`
-	return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
-})
+const createRimOnlySphereBmpDataUrl = () => {
+	const width = 96
+	const height = 56
+	const rowSize = Math.floor((24 * width + 31) / 32) * 4
+	const pixelArraySize = rowSize * height
+	const fileSize = 54 + pixelArraySize
+	const buf = new Uint8Array(fileSize)
+	const view = new DataView(buf.buffer)
 
-// H5 端为透镜内部前景内容层应用 SVG 折射滤镜
-const lensRefractionStageStyle = computed(() => {
-	// #ifdef H5
-	return {
-		filter: `url(#${svgFilterId})`
+	buf[0] = 0x42
+	buf[1] = 0x4d
+	view.setUint32(2, fileSize, true)
+	view.setUint32(10, 54, true)
+	view.setUint32(14, 40, true)
+	view.setInt32(18, width, true)
+	view.setInt32(22, -height, true)
+	view.setUint16(26, 1, true)
+	view.setUint16(28, 24, true)
+	view.setUint32(34, pixelArraySize, true)
+
+	const halfW = (width - 1) / 2
+	const halfH = (height - 1) / 2
+	const aspect = width / height
+	const seg = Math.max(0, aspect - 1.0)
+	const flatCore = 0.28
+
+	for (let y = 0; y < height; y++) {
+		const ny = (y - halfH) / halfH
+		for (let x = 0; x < width; x++) {
+			const nx = ((x - halfW) / halfW) * aspect
+			const qx = Math.max(-seg, Math.min(seg, nx))
+			const vx = nx - qx
+			const vy = ny
+			const d = Math.sqrt(vx * vx + vy * vy)
+			let rVal = 128
+			let gVal = 128
+
+			if (d > flatCore && d < 1.0) {
+				const u = (d - flatCore) / (1.0 - flatCore)
+				const rimBell = Math.sin(Math.PI * u) * Math.pow(u, 0.85)
+				const ux = vx / d
+				const uy = vy / d
+				const dispX = ux * rimBell
+				const dispY = uy * rimBell
+				rVal = Math.max(0, Math.min(255, Math.round(128 + dispX * 124)))
+				gVal = Math.max(0, Math.min(255, Math.round(128 + dispY * 124)))
+			}
+
+			const idx = 54 + y * rowSize + x * 3
+			buf[idx] = 128
+			buf[idx + 1] = gVal
+			buf[idx + 2] = rVal
+		}
 	}
-	// #endif
-	// #ifndef H5
-	return {}
-	// #endif
-})
 
-// 系统暗色模式检测
-const systemIsDark = ref(false)
-let darkMediaQuery = null
-let darkMediaHandler = null
+	const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+	let base64 = ''
+	const len = buf.length
+	for (let i = 0; i < len; i += 3) {
+		const b0 = buf[i]
+		const b1 = i + 1 < len ? buf[i + 1] : 0
+		const b2 = i + 2 < len ? buf[i + 2] : 0
+		base64 += chars[b0 >> 2]
+		base64 += chars[((b0 & 3) << 4) | (b1 >> 4)]
+		base64 += i + 1 < len ? chars[((b1 & 15) << 2) | (b2 >> 6)] : '='
+		base64 += i + 2 < len ? chars[b2 & 63] : '='
+	}
+	return `data:image/bmp;base64,${base64}`
+}
 
+const rimDisplacementDataUrl = ref(createRimOnlySphereBmpDataUrl())
+
+/**
+ * H5 / WebView 下使用 Canvas 生成 160x96 高精度跑道型胶囊液化折射贴图
+ */
+const upgradeRimDisplacementWithCanvas = () => {
+	if (typeof document === 'undefined') return
+	try {
+		const width = 160
+		const height = 96
+		const canvas = document.createElement('canvas')
+		canvas.width = width
+		canvas.height = height
+		const ctx = canvas.getContext('2d')
+		if (!ctx) return
+
+		const imgData = ctx.createImageData(width, height)
+		const data = imgData.data
+		const halfW = (width - 1) / 2
+		const halfH = (height - 1) / 2
+		const aspect = width / height
+		const seg = Math.max(0, aspect - 1.0)
+		const flatCore = 0.28
+
+		for (let y = 0; y < height; y++) {
+			const ny = (y - halfH) / halfH
+			for (let x = 0; x < width; x++) {
+				const nx = ((x - halfW) / halfW) * aspect
+				const qx = Math.max(-seg, Math.min(seg, nx))
+				const vx = nx - qx
+				const vy = ny
+				const d = Math.sqrt(vx * vx + vy * vy)
+				let rVal = 128
+				let gVal = 128
+
+				if (d > flatCore && d < 1.0) {
+					const u = (d - flatCore) / (1.0 - flatCore)
+					const rimBell = Math.sin(Math.PI * u) * Math.pow(u, 0.85)
+					const ux = vx / d
+					const uy = vy / d
+					const dispX = ux * rimBell
+					const dispY = uy * rimBell
+					rVal = Math.max(0, Math.min(255, Math.round(128 + dispX * 125)))
+					gVal = Math.max(0, Math.min(255, Math.round(128 + dispY * 125)))
+				}
+
+				const p = (y * width + x) * 4
+				data[p] = rVal
+				data[p + 1] = gVal
+				data[p + 2] = 128
+				data[p + 3] = 255
+			}
+		}
+
+		ctx.putImageData(imgData, 0, 0)
+		const url = canvas.toDataURL('image/png')
+		if (url && url.startsWith('data:image/png')) {
+			rimDisplacementDataUrl.value = url
+		}
+	} catch (e) {}
+}
+
+/**
+ * 图标生成器：
+ * - normal 层：深邃纯黑 (#1C1C1E)
+ * - active 层：纯正苹果蓝 (#007AFF)
+ * 两层几何轮廓 100% 相同，因此当水滴边缘切过相邻图标（如高德截图中切过“探索”左半边）时，
+ * 水滴内左半边为亮蓝色放大，水滴外右半边为黑色原样，严丝合缝！
+ */
+const ICON_SVG_BUILDERS = {
+	home: (color) =>
+		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none"><rect x="4" y="3" width="16" height="18" rx="3.5" stroke="${color}" stroke-width="2.2"/><line x1="8" y1="7.5" x2="14" y2="7.5" stroke="${color}" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="10.5" x2="12" y2="10.5" stroke="${color}" stroke-width="2" stroke-linecap="round"/><rect x="7.5" y="13" width="9" height="5" rx="1.2" fill="${color}"/></svg>`,
+	favorite: (color) =>
+		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="${color}" stroke="${color}" stroke-width="1.6" stroke-linejoin="round"><polygon points="12 2.4 14.95 8.38 21.55 9.34 16.77 14.00 17.90 20.57 12 17.47 6.10 20.57 7.23 14.00 2.45 9.34 9.05 8.38 12 2.4"/></svg>`,
+	community: (color) =>
+		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="${color}"><path d="M12 3C6.48 3 2 6.69 2 11.25c0 2.08.94 3.98 2.48 5.43-.18 1.24-.76 2.52-1.62 3.38-.22.22-.04.6.27.56 1.88-.24 3.63-.95 4.84-1.69 1.24.38 2.6.57 4.03.57 5.52 0 10-3.69 10-8.25S17.52 3 12 3z"/></svg>`,
+	profile: (color) =>
+		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="${color}"><circle cx="12" cy="7.2" r="4.3"/><path d="M4.2 19.6c0-3.4 3.5-5.8 7.8-5.8s7.8 2.4 7.8 5.8c0 .9-.7 1.6-1.6 1.6H5.8c-.9 0-1.6-.7-1.6-1.6z"/></svg>`
+}
+
+const ICON_CACHE = {}
+
+const getRenderedIconSrc = (item, mode) => {
+	// 优先使用真实传入的静态图标路径（支持小程序、H5与原生App端稳定渲染）
+	if (mode === 'active' && item?.activeIcon) {
+		return item.activeIcon
+	}
+	if (mode === 'normal' && (item?.defaultIcon || item?.icon)) {
+		return item.defaultIcon || item.icon
+	}
+
+	const key = item?.key || ''
+	const cacheKey = `${key}_${mode}`
+	if (ICON_CACHE[cacheKey]) {
+		return ICON_CACHE[cacheKey]
+	}
+
+	const builder = ICON_SVG_BUILDERS[key]
+	if (builder) {
+		const color = mode === 'active' ? '#FF5500' : '#1C1C1E'
+		const svg = builder(color)
+		const dataUri = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
+		ICON_CACHE[cacheKey] = dataUri
+		return dataUri
+	}
+
+	return item?.defaultIcon || item?.icon || ''
+}
+
+// 主题模式
+const systemDark = ref(false)
 const effectiveTheme = computed(() => {
-	if (props.theme === 'auto') {
-		return systemIsDark.value ? 'dark' : 'light'
+	if (props.theme === 'light' || props.theme === 'dark') {
+		return props.theme
 	}
-	return props.theme || 'light'
+	return systemDark.value ? 'dark' : 'light'
 })
 
-/**
- * 透镜交互状态机：
- * 'idle'      - 常态玻璃 Dock（透镜隐藏）
- * 'entering'  - 鼠标进入或手指触摸 Icon，透镜显现
- * 'moving'    - 鼠标跨 Icon 悬停移动或手指滑动，透镜平滑跟随
- * 'leaving'   - 鼠标离开 Dock 或手指抬起，透镜平滑淡出消失
- */
-const interactionState = ref('idle')
-const activeInputMode = ref('mouse') // 'mouse' | 'touch'
-const hoveredIndex = ref(-1)
-
-const isLensActive = computed(() => {
-	return interactionState.value === 'entering' || interactionState.value === 'moving'
-})
-
-const isLensVisible = computed(() => {
-	return (
-		interactionState.value === 'entering' ||
-		interactionState.value === 'moving' ||
-		interactionState.value === 'leaving'
-	)
-})
-
-/**
- * 共享 Active 高亮层 (.liquid-dock__active-indicator) 三阶段运动状态机：
- * 'rest'       - 阶段 C：稳定停靠在当前选中 Icon 中心（标准圆角胶囊）
- * 'stretching' - 阶段 A & B：开始移动与平滑移动过程（沿运动方向产生轻量液态横向拉伸与微压缩）
- */
-const isIndicatorReady = ref(false)
-const indicatorPhase = ref('rest')
-const indicatorStretchX = ref(1)
-const indicatorStretchY = ref(1)
-const indicatorOriginX = ref('50%')
-let indicatorStretchTimerId = null
-
-// 当前业务实际选中项索引（严格与 props.modelValue 路由状态同步）
-const targetIndex = computed(() => {
-	const list = props.items || []
-	const idx = list.findIndex((it) => it.key === props.modelValue)
-	return idx >= 0 ? idx : 0
-})
-
-/**
- * 当前激活项 Key：
- * - 点击切换或路由变化时，严格对应 props.modelValue；
- * - 触摸按住拖拽滑动时，实时对应当前命中的导航项，确保高亮层与选中状态同步跟随。
- */
-const activeItemKey = computed(() => {
-	const list = props.items || []
-	if (list.length === 0) return ''
-	if (
-		activeInputMode.value === 'touch' &&
-		isLensActive.value &&
-		hoveredIndex.value >= 0 &&
-		hoveredIndex.value < list.length
-	) {
-		const item = list[hoveredIndex.value]
-		if (item && !item.disabled) {
-			return item.key
-		}
-	}
-	return props.modelValue
-})
-
-// 透镜内部视觉副本高亮 Key（悬停或触摸哪个 Icon，透镜内即呈现清晰的放大激活视觉）
-const lensVisualActiveKey = computed(() => {
-	const list = props.items || []
-	if (list.length === 0) return ''
-	if (isLensVisible.value && hoveredIndex.value >= 0 && hoveredIndex.value < list.length) {
-		const item = list[hoveredIndex.value]
-		if (item && !item.disabled) {
-			return item.key
-		}
-	}
-	return props.modelValue
-})
-
-// Active 高亮层当前目标索引（与 activeItemKey 严格一致）
-const activeIndicatorIndex = computed(() => {
-	const list = props.items || []
-	const idx = list.findIndex((it) => it.key === activeItemKey.value)
-	return idx >= 0 ? idx : targetIndex.value
-})
-
-/**
- * 监听选中索引变化（无论是点击 Icon、触摸滑动还是外部路由修改 modelValue），
- * 触发共享高亮层的三阶段液态拉伸与平滑减速恢复动画
- */
+// 当前选中的 Tab Key 与索引
+const activeItemKey = ref(props.modelValue)
 watch(
-	activeIndicatorIndex,
-	(newIdx, oldIdx) => {
-		if (!isIndicatorReady.value) return
-		if (typeof oldIdx !== 'number' || newIdx === oldIdx) return
-
-		const stepCount = Math.abs(newIdx - oldIdx)
-		const direction = newIdx > oldIdx ? 1 : -1
-
-		// 根据跨度计算适度、克制的液态拉伸比例（1 格 ~1.13x，多格最高 ~1.22x，绝不夸张弹跳）
-		const stretchX = Math.min(1 + 0.10 + stepCount * 0.032, 1.22)
-		const stretchY = Math.max(1 - 0.03 - stepCount * 0.01, 0.94)
-
-		indicatorOriginX.value = direction > 0 ? '42%' : '58%'
-		indicatorStretchX.value = stretchX
-		indicatorStretchY.value = stretchY
-		indicatorPhase.value = 'stretching'
-
-		if (indicatorStretchTimerId !== null) {
-			clearTimeout(indicatorStretchTimerId)
+	() => props.modelValue,
+	(val) => {
+		if (val && val !== activeItemKey.value) {
+			activeItemKey.value = val
+			if (!isDragging.value) {
+				lensCenterX.value = getTabCenterX(activeIndex.value)
+			}
 		}
-		// 在位移过半（约 115ms）后进入阶段 C 自然回缩恢复为标准圆角胶囊，与位移终点（270ms）同步完成
-		indicatorStretchTimerId = setTimeout(() => {
-			indicatorStretchX.value = 1
-			indicatorStretchY.value = 1
-			indicatorOriginX.value = '50%'
-			indicatorPhase.value = 'rest'
-			indicatorStretchTimerId = null
-		}, Math.round(LENS_CONFIG.activeMoveDuration * 0.42))
 	}
 )
 
-/**
- * 共享 Active 高亮层外层轨道样式（仅负责 translate3d 位移，适配任意 3/4/5 个均匀分布导航项）
- */
-const activeIndicatorTrackStyle = computed(() => {
-	const len = props.items?.length || 4
-	const idx = activeIndicatorIndex.value
-	return {
-		width: `calc((100% - 10px) / ${len})`,
-		transform: `translate3d(${(idx * 100).toFixed(2)}%, 0, 0)`
-	}
+const activeIndex = computed(() => {
+	const idx = props.items.findIndex((item) => item.key === activeItemKey.value)
+	return idx >= 0 ? idx : 0
+})
+
+// 容器几何测量状态 (px)
+const dockRect = ref({
+	left: 16,
+	top: 0,
+	width: 348,
+	height: DOCK_CONFIG.dockHeight
+})
+
+// 胶囊/水滴当前中心 X 坐标（相对于 innerTrack 左边缘，单位 px）
+const lensCenterX = ref(42)
+const isReady = ref(false)
+// 是否处于按住/拖动的水滴凸透镜状态
+const isPressing = ref(false)
+const isDragging = ref(false)
+const dragStretchX = ref(1)
+const dragStretchY = ref(1)
+
+let resizeTimer = null
+let stretchResetTimer = null
+
+// 内部轨道宽度与单个 Tab 槽位宽度
+const innerTrackWidth = computed(() => {
+	return Math.max(dockRect.value.width - DOCK_CONFIG.pillInset * 2, 200)
+})
+
+const slotWidth = computed(() => {
+	const count = Math.max(props.items.length, 1)
+	return innerTrackWidth.value / count
 })
 
 /**
- * 共享 Active 高亮层内层胶囊形变样式（仅负责 scale3d 液态拉伸与回缩，与外层 translate3d 解耦）
+ * 获取第 index 个 Tab 在 innerTrack 内的中心 X 坐标 (px)
  */
-const activeIndicatorBodyStyle = computed(() => {
-	return {
-		transformOrigin: `${indicatorOriginX.value} 50%`,
-		transform: `scale3d(${indicatorStretchX.value.toFixed(3)}, ${indicatorStretchY.value.toFixed(3)}, 1)`
-	}
-})
+const getTabCenterX = (index) => {
+	return (index + 0.5) * slotWidth.value
+}
 
 /**
- * 同步初始化 Dock 容器几何尺寸（确保首帧坐标精确）
+ * 根据 innerTrack 内的 X 坐标计算命中的 Tab 索引
  */
-const getInitialDockMetrics = () => {
-	let winW = 375
-	let winH = 812
+const getHitIndexFromTrackX = (trackX) => {
+	const count = Math.max(props.items.length, 1)
+	const idx = Math.floor((trackX / innerTrackWidth.value) * count)
+	return Math.max(0, Math.min(count - 1, idx))
+}
+
+/**
+ * 限制水滴中心 X 坐标在底栏轨道内（边缘带柔和阻尼）
+ */
+const clampTrackCenterX = (rawTrackX) => {
+	const minCenter = slotWidth.value * 0.42
+	const maxCenter = innerTrackWidth.value - slotWidth.value * 0.42
+	if (rawTrackX < minCenter) {
+		return minCenter - (minCenter - rawTrackX) * 0.25
+	}
+	if (rawTrackX > maxCenter) {
+		return maxCenter + (rawTrackX - maxCenter) * 0.25
+	}
+	return rawTrackX
+}
+
+/**
+ * 测量底栏真实 DOM 尺寸
+ */
+const measureSurfaceRect = (callback) => {
 	try {
-		if (typeof uni !== 'undefined' && typeof uni.getSystemInfoSync === 'function') {
-			const sys = uni.getSystemInfoSync()
-			if (sys && sys.windowWidth > 0) {
-				winW = sys.windowWidth
-				winH = sys.windowHeight || 812
-			}
-		} else if (typeof window !== 'undefined' && window.innerWidth > 0) {
-			winW = window.innerWidth
-			winH = window.innerHeight || 812
-		}
-	} catch (e) {}
-
-	const rpxRatio = winW / 750
-	const marginPx = 64 * rpxRatio
-	const maxWidthPx = 720 * rpxRatio
-	const width = Math.min(winW - marginPx, maxWidthPx)
-	const height = Math.round(124 * rpxRatio)
-	const left = (winW - width) * 0.5
-	const top = winH - height - Math.round(24 * rpxRatio)
-
-	return {
-		left,
-		top,
-		width: Math.max(width, 240),
-		height: Math.max(height, 54)
-	}
-}
-
-const dockMetrics = ref(getInitialDockMetrics())
-
-// 透镜中心坐标状态（以当前悬停/触摸的 Icon 为中心，避免固定在 Dock 中央）
-const lensState = ref({
-	x: 50,
-	y: 31
-})
-
-// 内部交互追踪变量
-let isTouchActive = false
-let lastTouchTime = 0
-let touchStartX = 0
-let touchStartY = 0
-let hasTouchDragged = false
-let suppressNextSyntheticClick = false
-let lastMoveFrameTime = 0
-let leaveTimerId = null
-let enterTimerId = null
-let suppressClickTimerId = null
-let readyTimerId = null
-
-// 单项百分比宽度
-const itemWidthPercent = computed(() => {
-	const len = props.items?.length || 4
-	return `${(100 / len).toFixed(4)}%`
-})
-
-/**
- * 根节点样式与提取的 CSS 自定义属性（尺寸、放大倍率、高光强度、透明度、动画时长）
- */
-const containerStyle = computed(() => {
-	return {
-		zIndex: props.zIndex,
-		'--lens-width': `${LENS_CONFIG.lensWidth}px`,
-		'--lens-height': `${LENS_CONFIG.lensHeight}px`,
-		'--lens-scale': `${LENS_CONFIG.magnification}`,
-		'--lens-specular-opacity': `${LENS_CONFIG.specularOpacity}`,
-		'--lens-bg-opacity': `${LENS_CONFIG.lensBgOpacity}`,
-		'--lens-enter-duration': `${LENS_CONFIG.enterDuration}ms`,
-		'--lens-move-duration': `${LENS_CONFIG.moveDuration}ms`,
-		'--lens-leave-duration': `${LENS_CONFIG.leaveDuration}ms`,
-		'--active-move-duration': `${LENS_CONFIG.activeMoveDuration}ms`,
-		'--icon-color-duration': `${LENS_CONFIG.iconColorDuration}ms`,
-		'--icon-scale-duration': `${LENS_CONFIG.iconScaleDuration}ms`
-	}
-})
-
-const surfaceStyle = computed(() => {
-	return {
-		maxWidth: props.maxWidth
-	}
-})
-
-/**
- * 计算指定索引的 Icon 在 Dock 表面内的水平中心坐标 (px)
- * @param {number} index - 导航项索引
- * @returns {number}
- */
-const getItemCenterX = (index) => {
-	const m = dockMetrics.value
-	const len = props.items?.length || 4
-	const innerPadding = 5
-	const itemWidth = Math.max(m.width - innerPadding * 2, 1) / len
-	const safeIdx = Number.isFinite(index) ? Math.min(Math.max(index, 0), len - 1) : 0
-	return innerPadding + (safeIdx + 0.5) * itemWidth
-}
-
-/**
- * 透镜外层定位与缩放样式
- */
-const lensOuterStyle = computed(() => {
-	const lw = LENS_CONFIG.lensWidth
-	const lh = LENS_CONFIG.lensHeight
-	const tx = lensState.value.x - lw * 0.5
-	const ty = lensState.value.y - lh * 0.5
-
-	let scale = 0.84
-	if (interactionState.value === 'entering' || interactionState.value === 'moving') {
-		scale = 1
-	} else if (interactionState.value === 'leaving') {
-		scale = 0.88
-	}
-
-	return {
-		width: `${lw}px`,
-		height: `${lh}px`,
-		transform: `translate3d(${tx.toFixed(1)}px, ${ty.toFixed(1)}px, 0) scale3d(${scale}, ${scale}, 1)`
-	}
-})
-
-/**
- * 透镜内部局部放大场景定位与缩放样式
- * 实时反向补偿位移，确保透镜内部图标始终锚定在原物理位置放大
- */
-const lensSceneStyle = computed(() => {
-	const m = dockMetrics.value
-	const lw = LENS_CONFIG.lensWidth
-	const lh = LENS_CONFIG.lensHeight
-	const scale = LENS_CONFIG.magnification
-	const viewportInset = 1.5
-	const sceneTx = lw * 0.5 - viewportInset - lensState.value.x * scale
-	const sceneTy = lh * 0.5 - viewportInset - lensState.value.y * scale
-
-	return {
-		width: `${m.width.toFixed(1)}px`,
-		height: `${m.height.toFixed(1)}px`,
-		transform: `translate3d(${sceneTx.toFixed(1)}px, ${sceneTy.toFixed(1)}px, 0) scale(${scale})`
-	}
-})
-
-/**
- * 底层原始导航项样式：
- * 普通状态下保持原尺寸和原位置；当透镜覆盖在当前 Icon 上时，底层原 Icon 隐退，完全由透镜内放大副本呈现，消除双影
- */
-const getBaseItemStyle = (index) => {
-	if (!isLensActive.value) {
-		return {
-			width: itemWidthPercent.value,
-			opacity: 1
-		}
-	}
-
-	const itemCenterX = getItemCenterX(index)
-	const dist = Math.abs(lensState.value.x - itemCenterX)
-	const lensHalfW = LENS_CONFIG.lensWidth * 0.48
-
-	let opacity = 1
-	if (dist < lensHalfW) {
-		const norm = dist / lensHalfW
-		opacity = Math.pow(norm, 2.6) * 0.85
-	}
-
-	return {
-		width: itemWidthPercent.value,
-		opacity: opacity.toFixed(2)
-	}
-}
-
-/**
- * 透镜内部视觉副本的边缘弯曲、拉伸折射样式
- */
-const getCloneItemDistortionStyle = (index) => {
-	const itemCenterX = getItemCenterX(index)
-	const dx = itemCenterX - lensState.value.x
-	const halfLensW = LENS_CONFIG.lensWidth * 0.5
-	const normX = Math.max(Math.min(dx / halfLensW, 1.3), -1.3)
-	const absNorm = Math.abs(normX)
-
-	// 透镜中央 36% 区域零扭曲，保证主放大图标与标签文字端正清晰
-	const edgeFactor = absNorm <= 0.36 ? 0 : Math.min((absNorm - 0.36) / 0.64, 1.1)
-	const strength = LENS_CONFIG.edgeDistortionStrength
-
-	const radialPushPx = normX * edgeFactor * 5.5
-	const scaleX = 1 + edgeFactor * strength
-	const scaleY = 1 - edgeFactor * (strength * 0.3)
-	const skewDeg = -normX * edgeFactor * 6.5
-
-	return {
-		width: itemWidthPercent.value,
-		transform: `translate3d(${radialPushPx.toFixed(1)}px, 0, 0) scale(${scaleX.toFixed(3)}, ${scaleY.toFixed(3)}) skewX(${skewDeg.toFixed(2)}deg)`
-	}
-}
-
-/**
- * 获取默认态与激活态图标资源路径
- */
-const getDefaultIconSrc = (item) => {
-	return item.defaultIcon || item.icon
-}
-
-const getActiveIconSrc = (item) => {
-	return item.activeIcon || item.icon || item.defaultIcon
-}
-
-/**
- * 徽标判断与格式化
- */
-const hasBadge = (badge) => {
-	if (badge === true || badge === 'dot') return true
-	if (typeof badge === 'number') return badge > 0
-	if (typeof badge === 'string') return badge.trim().length > 0
-	return false
-}
-
-const isDotBadge = (badge) => {
-	return badge === true || badge === 'dot'
-}
-
-const formatBadge = (badge) => {
-	if (typeof badge === 'number') {
-		return badge > 99 ? '99+' : `${badge}`
-	}
-	return badge
-}
-
-/**
- * 提取事件中的屏幕坐标（兼容 TouchEvent / MouseEvent / PointerEvent）
- */
-const extractEventPoint = (e) => {
-	if (!e) return null
-
-	const touch =
-		(e.touches && e.touches[0]) ||
-		(e.changedTouches && e.changedTouches[0])
-
-	if (touch) {
-		const tx = touch.clientX ?? touch.pageX ?? touch.x
-		const ty = touch.clientY ?? touch.pageY ?? touch.y
-		if (typeof tx === 'number' && Number.isFinite(tx)) {
-			return {
-				x: tx,
-				y: typeof ty === 'number' && Number.isFinite(ty) ? ty : 0
-			}
-		}
-	}
-
-	const cx = e.clientX ?? e.pageX ?? e.detail?.clientX ?? e.detail?.x
-	const cy = e.clientY ?? e.pageY ?? e.detail?.clientY ?? e.detail?.y
-	if (typeof cx === 'number' && Number.isFinite(cx)) {
-		return {
-			x: cx,
-			y: typeof cy === 'number' && Number.isFinite(cy) ? cy : 0
-		}
-	}
-
-	return null
-}
-
-/**
- * 测量并更新 Dock 表面容器的真实几何坐标
- */
-const measureSurfaceRect = () => {
-	const fallback = getInitialDockMetrics()
-	if (dockMetrics.value.width <= 0) {
-		dockMetrics.value = fallback
-	}
-
-	// #ifdef H5
-	const domEl = surfaceRef.value?.$el || surfaceRef.value
-	if (domEl && typeof domEl.getBoundingClientRect === 'function') {
-		const rect = domEl.getBoundingClientRect()
-		if (rect && rect.width > 0 && rect.height > 0) {
-			dockMetrics.value = {
-				left: rect.left,
-				top: rect.top,
-				width: rect.width,
-				height: rect.height
-			}
-			return
-		}
-	}
-	// #endif
-
-	try {
-		if (typeof uni !== 'undefined' && typeof uni.createSelectorQuery === 'function') {
-			const query = instance?.proxy
-				? uni.createSelectorQuery().in(instance.proxy)
-				: uni.createSelectorQuery()
-			query
-				.select('#liquidDockSurface')
-				.boundingClientRect((rect) => {
-					if (rect && rect.width > 0 && rect.height > 0) {
-						dockMetrics.value = {
-							left: rect.left,
-							top: rect.top,
-							width: rect.width,
-							height: rect.height
-						}
+		const query = instance?.proxy
+			? uni.createSelectorQuery().in(instance.proxy)
+			: uni.createSelectorQuery()
+		query
+			.select('#liquidDockSurface')
+			.boundingClientRect((rect) => {
+				if (rect && rect.width > 0) {
+					dockRect.value = {
+						left: rect.left,
+						top: rect.top,
+						width: rect.width,
+						height: rect.height || DOCK_CONFIG.dockHeight
 					}
-				})
-				.exec()
+				}
+				if (typeof callback === 'function') {
+					callback()
+				}
+			})
+			.exec()
+	} catch (e) {
+		if (typeof callback === 'function') {
+			callback()
 		}
-	} catch (err) {}
-}
-
-/**
- * 根据相对 X 坐标计算命中的导航项索引
- * @param {number} rawX - 相对 Dock 左边缘的 X 坐标
- * @returns {number}
- */
-const getHitItemIndex = (rawX) => {
-	const m = dockMetrics.value
-	const len = props.items?.length || 4
-	const innerPadding = 5
-	const usableWidth = Math.max(m.width - innerPadding * 2, 1)
-	const itemWidth = usableWidth / len
-	const idx = Math.floor((rawX - innerPadding) / itemWidth)
-	if (!Number.isFinite(idx)) return targetIndex.value
-	return Math.min(Math.max(idx, 0), len - 1)
-}
-
-/**
- * 清理透镜过渡定时器
- */
-const clearTransitionTimers = () => {
-	if (leaveTimerId !== null) {
-		clearTimeout(leaveTimerId)
-		leaveTimerId = null
 	}
-	if (enterTimerId !== null) {
-		clearTimeout(enterTimerId)
-		enterTimerId = null
+}
+
+// 样式计算
+const containerStyle = computed(() => ({
+	maxWidth: props.maxWidth,
+	'--dock-blur': `${props.blur}px`,
+	'--pill-move-duration': `${DOCK_CONFIG.moveDuration}ms`
+}))
+
+const surfaceStyle = computed(() => ({
+	height: `${DOCK_CONFIG.dockHeight}px`,
+	padding: `${DOCK_CONFIG.pillInset}px`
+}))
+
+const getItemSlotStyle = () => {
+	const count = Math.max(props.items.length, 1)
+	return {
+		width: `${(100 / count).toFixed(4)}%`
 	}
 }
 
 /**
- * 激活或移动透镜至指定导航项
- * @param {number} index - 目标 Icon 索引
- * @param {number|null} pointerClientX - 指针屏幕 X（可选）
- * @param {string} mode - 'mouse' | 'touch'
+ * 当前激活容器的实时宽高：
+ * - 常态 (!isPressing)：宽 = slotWidth，高 = innerH (54px 内嵌浅灰胶囊)
+ * - 按住/拖动态 (isPressing)：宽高同时乘以 DOCK_CONFIG.pressScale (1.28)，100% 保持未按住胶囊的宽高比，绝不变圆！
  */
-const focusLensOnItem = (index, pointerClientX = null, mode = 'mouse') => {
-	if (props.disabled) return
-	const list = props.items || []
-	if (index < 0 || index >= list.length || list[index]?.disabled) return
+const currentLensWidth = computed(() => {
+	const baseW = slotWidth.value
+	return isPressing.value ? baseW * DOCK_CONFIG.pressScale : baseW
+})
 
-	clearTransitionTimers()
-	activeInputMode.value = mode
+const currentLensHeight = computed(() => {
+	const innerH = (dockRect.value.height || DOCK_CONFIG.dockHeight) - DOCK_CONFIG.pillInset * 2
+	return isPressing.value ? innerH * DOCK_CONFIG.pressScale : innerH
+})
 
-	const m = dockMetrics.value
-	const itemCenterX = getItemCenterX(index)
-	let targetX = itemCenterX
+/**
+ * 顶层双态透镜外层定位样式
+ */
+const morphLensOuterStyle = computed(() => {
+	const innerH = (dockRect.value.height || DOCK_CONFIG.dockHeight) - DOCK_CONFIG.pillInset * 2
+	const w = currentLensWidth.value
+	const h = currentLensHeight.value
 
-	if (typeof pointerClientX === 'number' && Number.isFinite(pointerClientX)) {
-		const rawX = pointerClientX - m.left
-		const offsetFromCenter = rawX - itemCenterX
-		if (mode === 'mouse') {
-			// 桌面悬停：以当前 Icon 为核心锚点，仅保留 ±5px 微量阻尼柔顺感，防止微移抖动
-			const dampedOffset = Math.max(Math.min(offsetFromCenter * 0.14, 5), -5)
-			targetX = itemCenterX + dampedOffset
+	const leftPx = Math.round((lensCenterX.value - w / 2) * 100) / 100
+	const topPx = Math.round(((innerH - h) / 2) * 100) / 100
+
+	return {
+		width: `${Math.round(w * 100) / 100}px`,
+		height: `${Math.round(h * 100) / 100}px`,
+		transform: `translate3d(${leftPx}px, ${topPx}px, 0) scale3d(${dragStretchX.value}, ${dragStretchY.value}, 1)`
+	}
+})
+
+const morphBackdropStyle = computed(() => ({}))
+
+/**
+ * 透镜内部 #007AFF 亮蓝色克隆轨道的反向平移 + 按住态 1.22x 中心放大样式
+ * 无论处于常态还是按住破界水滴态，内部蓝色内容与底层黑色内容在中心坐标 (lensCenterX, innerH/2) 上 100% 对齐！
+ */
+const morphCloneTrackStyle = computed(() => {
+	const innerW = innerTrackWidth.value
+	const innerH = (dockRect.value.height || DOCK_CONFIG.dockHeight) - DOCK_CONFIG.pillInset * 2
+	const w = currentLensWidth.value
+	const h = currentLensHeight.value
+	const scale = isPressing.value ? DOCK_CONFIG.dropletMagnification : 1
+
+	const Cx = lensCenterX.value
+	const Cy = innerH / 2
+
+	// 将轨道上的点 (Cx, Cy) 映射到当前透镜容器正中心 (w/2, h/2)，并围绕该中心放大 scale 倍：
+	const tx = Math.round((w / 2 - scale * Cx) * 100) / 100
+	const ty = Math.round((h / 2 - scale * Cy) * 100) / 100
+
+	return {
+		width: `${Math.round(innerW * 100) / 100}px`,
+		height: `${Math.round(innerH * 100) / 100}px`,
+		transformOrigin: '0 0',
+		transform: `translate3d(${tx}px, ${ty}px, 0) scale(${scale})`
+	}
+})
+
+/**
+ * 底层 Normal Layer 跑道型胶囊精准镂空遮罩：
+ * 使用 SVG evenodd 复合路径实时挖空与顶层跑道型胶囊 1:1 严丝合缝对齐的圆角胶囊孔洞：
+ * 1. 胶囊内部只显示清晰放大的 #007AFF 亮蓝内容，绝无底层黑色图标重影；
+ * 2. 当跑道型水滴胶囊滑到两个 Tab 中间（如图 3 压住相邻 Tab 左半边）时，胶囊内左半边为亮蓝色折射放大，胶囊外右半边为黑色原样！
+ */
+const normalLayerMaskStyle = computed(() => {
+	const W = Math.max(Math.round(innerTrackWidth.value), 200)
+	const H = Math.max(
+		Math.round((dockRect.value.height || DOCK_CONFIG.dockHeight) - DOCK_CONFIG.pillInset * 2),
+		40
+	)
+	const w = Math.max(24, Math.round(currentLensWidth.value * dragStretchX.value - 2))
+	const h = Math.max(24, Math.round(currentLensHeight.value * dragStretchY.value - 2))
+	const r = Math.round((Math.min(w, h) / 2) * 10) / 10
+	const x0 = Math.round((lensCenterX.value - w / 2) * 10) / 10
+	const y0 = Math.round(((H - h) / 2) * 10) / 10
+
+	const outerPath = `M0,0H${W}V${H}H0Z`
+	const pillHolePath = `M${x0 + r},${y0}H${x0 + w - r}A${r},${r} 0 0 1 ${x0 + w},${y0 + r}V${y0 + h - r}A${r},${r} 0 0 1 ${x0 + w - r},${y0 + h}H${x0 + r}A${r},${r} 0 0 1 ${x0},${y0 + h - r}V${y0 + r}A${r},${r} 0 0 1 ${x0 + r},${y0}Z`
+	const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"><path fill="#000" fill-rule="evenodd" d="${outerPath}${pillHolePath}"/></svg>`
+	const maskUrl = `url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}")`
+
+	return {
+		WebkitMaskImage: maskUrl,
+		maskImage: maskUrl,
+		WebkitMaskSize: '100% 100%',
+		maskSize: '100% 100%',
+		WebkitMaskRepeat: 'no-repeat',
+		maskRepeat: 'no-repeat'
+	}
+})
+
+/**
+ * 统一提取客户端横坐标 clientX（兼容 Touch 与 Mouse 事件）
+ */
+const extractClientX = (e) => {
+	const touch =
+		(e?.touches && e.touches[0]) ||
+		(e?.changedTouches && e.changedTouches[0]) ||
+		(e?.detail?.touches && e.detail.touches[0]) ||
+		(e?.detail?.changedTouches && e.detail.changedTouches[0])
+	if (touch) {
+		const x = touch.clientX ?? touch.pageX ?? touch.x
+		if (typeof x === 'number' && !Number.isNaN(x)) return x
+	}
+	const directX = e?.clientX ?? e?.pageX ?? e?.detail?.clientX ?? e?.detail?.pageX ?? e?.detail?.x
+	return typeof directX === 'number' && !Number.isNaN(directX) ? directX : null
+}
+
+/**
+ * 按下开始（同时支持手指触摸 touchstart 与鼠标按住 mousedown）
+ * 仅浮起并移动液态玻璃水滴透镜，不切换业务页面（松开后才切换）
+ */
+const startPressAtClientX = (clientX) => {
+	if (props.disabled || clientX === null) return
+
+	isPressing.value = true
+	isDragging.value = false
+
+	measureSurfaceRect(() => {
+		const trackX = clientX - dockRect.value.left - DOCK_CONFIG.pillInset
+		const hitIdx = getHitIndexFromTrackX(trackX)
+
+		// 若按在其他 Tab 上，水滴平滑滑向该位置；若按在当前水滴附近则直接吸附跟手
+		const targetCenter = getTabCenterX(hitIdx)
+		if (Math.abs(trackX - lensCenterX.value) <= slotWidth.value * 0.65) {
+			isDragging.value = true
+			lensCenterX.value = clampTrackCenterX(trackX)
 		} else {
-			// 触摸滑动：平滑跟手移动
-			const minX = LENS_CONFIG.lensWidth * 0.34
-			const maxX = Math.max(m.width - minX, minX)
-			const clampedRawX = Math.max(Math.min(rawX, maxX), minX)
-			targetX = itemCenterX * 0.32 + clampedRawX * 0.68
+			lensCenterX.value = targetCenter
 		}
-	}
-
-	const wasIdleOrLeaving =
-		interactionState.value === 'idle' || interactionState.value === 'leaving'
-
-	hoveredIndex.value = index
-	lensState.value = {
-		x: targetX,
-		y: m.height * 0.5
-	}
-
-	// 触摸按住滑动到新的导航项时，同步更新选中项，驱动高亮层与透镜协同平滑移动
-	if (mode === 'touch') {
-		const hitItem = list[index]
-		if (hitItem && !hitItem.disabled && hitItem.key !== props.modelValue) {
-			emit('update:modelValue', hitItem.key)
-			emit('change', hitItem.key, hitItem)
-		}
-	}
-
-	if (wasIdleOrLeaving) {
-		interactionState.value = 'entering'
-		enterTimerId = setTimeout(() => {
-			if (interactionState.value === 'entering') {
-				interactionState.value = 'moving'
-			}
-			enterTimerId = null
-		}, LENS_CONFIG.enterDuration)
-	} else if (interactionState.value !== 'moving') {
-		interactionState.value = 'moving'
-	}
+	})
 }
 
 /**
- * 平滑隐藏透镜
+ * 按住移动（实时 1:1 跟手滑动水滴凸透镜）
+ * 滑动过程中仅移动液态玻璃透镜与实时液化折射，不触发页面切换
  */
-const hideLensSmoothly = () => {
-	if (interactionState.value === 'idle') return
+const movePressAtClientX = (clientX) => {
+	if (props.disabled || !isPressing.value || clientX === null) return
 
-	clearTransitionTimers()
+	isDragging.value = true
+	const rawTrackX = clientX - dockRect.value.left - DOCK_CONFIG.pillInset
+	const clampedX = clampTrackCenterX(rawTrackX)
 
-	const snapIdx = hoveredIndex.value >= 0 ? hoveredIndex.value : targetIndex.value
-	lensState.value = {
-		x: getItemCenterX(snapIdx),
-		y: dockMetrics.value.height * 0.5
+	// 根据拖动速度产生轻微液态水滴横向弹性张力
+	const delta = Math.abs(clampedX - lensCenterX.value)
+	const stretch = Math.min(1.07, 1 + delta * 0.004)
+	dragStretchX.value = Number(stretch.toFixed(3))
+	dragStretchY.value = Number((1 / Math.sqrt(stretch)).toFixed(3))
+
+	if (stretchResetTimer) clearTimeout(stretchResetTimer)
+	stretchResetTimer = setTimeout(() => {
+		dragStretchX.value = 1
+		dragStretchY.value = 1
+	}, 90)
+
+	lensCenterX.value = clampedX
+}
+
+/**
+ * 松开手指或鼠标：此时才确认选中的 Tab 并切换业务页面，水滴吸附回选中 Tab 中心并收拢为常态胶囊
+ */
+const endPressAtClientX = (clientX) => {
+	if (!isPressing.value && !isDragging.value) return
+
+	const finalTrackX =
+		clientX !== null
+			? clientX - dockRect.value.left - DOCK_CONFIG.pillInset
+			: lensCenterX.value
+	const hitIdx = getHitIndexFromTrackX(finalTrackX)
+	const hitItem = props.items[hitIdx]
+	if (hitItem && !hitItem.disabled) {
+		commitActiveItem(hitItem, hitIdx)
 	}
 
-	interactionState.value = 'leaving'
-	leaveTimerId = setTimeout(() => {
-		interactionState.value = 'idle'
-		hoveredIndex.value = -1
-		leaveTimerId = null
-	}, LENS_CONFIG.leaveDuration)
+	isDragging.value = false
+	isPressing.value = false
+	dragStretchX.value = 1
+	dragStretchY.value = 1
+	lensCenterX.value = getTabCenterX(activeIndex.value)
 }
 
-/* ==========================================================================
- * 桌面端鼠标悬停交互（无需按下鼠标，进入 Icon 即刻呈现透镜，跨 Icon 平滑跟随，离开淡出）
- * ========================================================================== */
-
-const handleSurfaceMouseEnter = () => {
-	if (props.disabled) return
-	if (Date.now() - lastTouchTime < 650) return
-	measureSurfaceRect()
-}
-
-const handleItemMouseEnter = (index, e) => {
-	if (props.disabled) return
-	if (isTouchActive || Date.now() - lastTouchTime < 650) return
-	measureSurfaceRect()
-	const pt = extractEventPoint(e)
-	focusLensOnItem(index, pt ? pt.x : null, 'mouse')
-}
-
-const handleSurfaceMouseMove = (e) => {
-	if (props.disabled) return
-	if (isTouchActive || Date.now() - lastTouchTime < 650) return
-
-	const now = Date.now()
-	if (now - lastMoveFrameTime < 16) return
-	lastMoveFrameTime = now
-
-	const pt = extractEventPoint(e)
-	if (!pt) return
-
-	const rawX = pt.x - dockMetrics.value.left
-	const hitIdx = getHitItemIndex(rawX)
-	focusLensOnItem(hitIdx, pt.x, 'mouse')
-}
-
-const handleSurfaceMouseLeave = () => {
-	if (isTouchActive) return
-	hideLensSmoothly()
-}
-
-/* ==========================================================================
- * 移动端 / App 端触摸交互
- * ========================================================================== */
-
+// Touch 事件处理
 const handleTouchStart = (e) => {
-	if (props.disabled) return
-	lastTouchTime = Date.now()
-	isTouchActive = true
-	hasTouchDragged = false
-
-	measureSurfaceRect()
-	const pt = extractEventPoint(e)
-	if (!pt) return
-
-	touchStartX = pt.x
-	touchStartY = pt.y
-	const rawX = pt.x - dockMetrics.value.left
-	const hitIdx = getHitItemIndex(rawX)
-	focusLensOnItem(hitIdx, pt.x, 'touch')
+	startPressAtClientX(extractClientX(e))
 }
 
 const handleTouchMove = (e) => {
-	if (!isTouchActive || props.disabled) return
-	lastTouchTime = Date.now()
-
-	const now = lastTouchTime
-	if (now - lastMoveFrameTime < 14) return
-	lastMoveFrameTime = now
-
-	const pt = extractEventPoint(e)
-	if (!pt) return
-
-	const deltaX = pt.x - touchStartX
-	const deltaY = pt.y - touchStartY
-	if (!hasTouchDragged && Math.hypot(deltaX, deltaY) > 6) {
-		hasTouchDragged = true
-	}
-
-	const rawX = pt.x - dockMetrics.value.left
-	const hitIdx = getHitItemIndex(rawX)
-	focusLensOnItem(hitIdx, pt.x, 'touch')
+	movePressAtClientX(extractClientX(e))
 }
 
-const handleTouchEnd = () => {
-	if (!isTouchActive) return
-	lastTouchTime = Date.now()
-	isTouchActive = false
-
-	if (hasTouchDragged) {
-		hasTouchDragged = false
-		suppressNextSyntheticClick = true
-		if (suppressClickTimerId !== null) clearTimeout(suppressClickTimerId)
-		suppressClickTimerId = setTimeout(() => {
-			suppressNextSyntheticClick = false
-			suppressClickTimerId = null
-		}, 260)
-	}
-
-	hideLensSmoothly()
+const handleTouchEnd = (e) => {
+	endPressAtClientX(extractClientX(e))
 }
 
-const handleTouchCancel = () => {
-	isTouchActive = false
-	hasTouchDragged = false
-	hideLensSmoothly()
+const handleTouchCancel = (e) => {
+	endPressAtClientX(extractClientX(e))
 }
 
-/**
- * 单项点击导航处理：
- * 点击后立即更新 modelValue，共享高亮层连续平滑移动到实际选中项，并与透镜位置协调一致
- */
-const handleItemClick = (item, index) => {
-	if (props.disabled || item.disabled) return
+// Mouse 事件处理（支持 H5 / 电脑端模拟器用鼠标按住左右拖动水滴）
+let isMouseDown = false
 
-	emit('itemClick', item, index)
+const handleMouseDown = (e) => {
+	if (props.disabled) return
+	isMouseDown = true
+	startPressAtClientX(extractClientX(e))
+}
 
-	if (suppressNextSyntheticClick) {
-		suppressNextSyntheticClick = false
-		return
-	}
+const handleWindowMouseMove = (e) => {
+	if (!isMouseDown) return
+	movePressAtClientX(extractClientX(e))
+}
 
-	if (item.key !== props.modelValue) {
+const handleWindowMouseUp = (e) => {
+	if (!isMouseDown) return
+	isMouseDown = false
+	endPressAtClientX(extractClientX(e))
+}
+
+const commitActiveItem = (item, index) => {
+	if (!item || item.disabled) return
+	emit('item-click', item, index)
+	if (activeItemKey.value !== item.key) {
+		activeItemKey.value = item.key
 		emit('update:modelValue', item.key)
-		emit('change', item.key, item)
+		emit('change', item.key, item, index)
 	}
 }
 
-const handleWindowBlur = () => {
-	isTouchActive = false
-	hasTouchDragged = false
-	hideLensSmoothly()
+const handleItemClick = (item, index) => {
+	if (props.disabled || !item || item.disabled) return
+	commitActiveItem(item, index)
+	isDragging.value = false
+	isPressing.value = false
+	lensCenterX.value = getTabCenterX(index)
+}
+
+// 徽标辅助函数
+const hasBadge = (badge) => badge !== undefined && badge !== null && badge !== '' && badge !== 0 && badge !== false
+const isDotBadge = (badge) => badge === true || badge === 'dot'
+const formatBadge = (badge) => {
+	const num = Number(badge)
+	if (!Number.isNaN(num)) {
+		return num > 99 ? '99+' : String(num)
+	}
+	return String(badge)
 }
 
 const handleWindowResize = () => {
-	dockMetrics.value = getInitialDockMetrics()
-	measureSurfaceRect()
+	if (resizeTimer) clearTimeout(resizeTimer)
+	resizeTimer = setTimeout(() => {
+		measureSurfaceRect(() => {
+			lensCenterX.value = getTabCenterX(activeIndex.value)
+		})
+	}, 60)
 }
 
-// 挂载与卸载生命周期
 onMounted(() => {
-	dockMetrics.value = getInitialDockMetrics()
-	lensState.value = {
-		x: getItemCenterX(targetIndex.value),
-		y: dockMetrics.value.height * 0.5
-	}
+	try {
+		const sys = uni.getSystemInfoSync()
+		if (sys && sys.theme) {
+			systemDark.value = sys.theme === 'dark'
+		}
+		if (sys && sys.windowWidth) {
+			const estWidth = Math.min(sys.windowWidth - 24, 360)
+			dockRect.value.width = estWidth
+			dockRect.value.left = (sys.windowWidth - estWidth) / 2
+		}
+	} catch (e) {}
 
-	// 首帧直接定位到初始 active 项后开启过渡，避免首次加载时从边缘飞入
-	readyTimerId = setTimeout(() => {
-		isIndicatorReady.value = true
-		measureSurfaceRect()
-		readyTimerId = null
-	}, 50)
+	upgradeRimDisplacementWithCanvas()
+	lensCenterX.value = getTabCenterX(activeIndex.value)
+
+	setTimeout(() => {
+		measureSurfaceRect(() => {
+			lensCenterX.value = getTabCenterX(activeIndex.value)
+			setTimeout(() => {
+				isReady.value = true
+			}, 30)
+		})
+	}, 40)
 
 	// #ifdef H5
 	if (typeof window !== 'undefined') {
 		window.addEventListener('resize', handleWindowResize, { passive: true })
-		window.addEventListener('blur', handleWindowBlur)
-		if (typeof document !== 'undefined') {
-			document.addEventListener('visibilitychange', handleWindowBlur)
-		}
-		if (window.matchMedia) {
-			darkMediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-			systemIsDark.value = darkMediaQuery.matches
-			darkMediaHandler = (e) => {
-				systemIsDark.value = e.matches
-			}
-			darkMediaQuery.addEventListener('change', darkMediaHandler)
-		}
+		window.addEventListener('mousemove', handleWindowMouseMove, { passive: true })
+		window.addEventListener('mouseup', handleWindowMouseUp, { passive: true })
 	}
 	// #endif
 })
 
 onBeforeUnmount(() => {
-	clearTransitionTimers()
-	if (indicatorStretchTimerId !== null) {
-		clearTimeout(indicatorStretchTimerId)
-		indicatorStretchTimerId = null
-	}
-	if (suppressClickTimerId !== null) {
-		clearTimeout(suppressClickTimerId)
-		suppressClickTimerId = null
-	}
-	if (readyTimerId !== null) {
-		clearTimeout(readyTimerId)
-		readyTimerId = null
-	}
-
+	if (resizeTimer) clearTimeout(resizeTimer)
+	if (stretchResetTimer) clearTimeout(stretchResetTimer)
 	// #ifdef H5
 	if (typeof window !== 'undefined') {
 		window.removeEventListener('resize', handleWindowResize)
-		window.removeEventListener('blur', handleWindowBlur)
-		if (typeof document !== 'undefined') {
-			document.removeEventListener('visibilitychange', handleWindowBlur)
-		}
-		if (darkMediaQuery && darkMediaHandler) {
-			darkMediaQuery.removeEventListener('change', darkMediaHandler)
-		}
+		window.removeEventListener('mousemove', handleWindowMouseMove)
+		window.removeEventListener('mouseup', handleWindowMouseUp)
 	}
 	// #endif
 })
@@ -1153,32 +916,40 @@ onBeforeUnmount(() => {
 
 <style scoped lang="scss">
 /* ==========================================================================
- * Liquid Glass Dock — 连续液态 Active 高亮过渡与局部凸透镜系统
+ * 双态液态玻璃 TabBar：
+ * 1. 常态（未按住）：还原图二 iOS 26 内嵌柔和浅灰胶囊 + 锐利 #007AFF 蓝标
+ * 2. 按住/拖动态：还原高德截图破界悬浮 3D 水滴凸透镜（中心高清放大、外圈球面折射与棱镜色散环、顶部胶囊高光条）
  * ========================================================================== */
-
 .liquid-dock {
+	--dock-blur: 20px;
+	--pill-move-duration: 280ms;
+	--pill-ease: cubic-bezier(0.22, 1, 0.36, 1);
+	--ios-active-orange: #FF5500;
+	--ios-inactive-black: #1C1C1E;
+
 	position: fixed;
-	left: 0;
-	right: 0;
-	bottom: 24rpx;
-	display: flex;
-	justify-content: center;
-	align-items: center;
+	left: 50%;
+	bottom: 16rpx;
+	transform: translate3d(-50%, 0, 0);
+	width: calc(100% - 48rpx);
+	max-width: 720rpx;
+	z-index: 999;
 	pointer-events: none;
-	isolation: isolate;
-	transition: bottom 0.25s ease;
+	user-select: none;
+	-webkit-user-select: none;
+	box-sizing: border-box;
+	overflow: visible !important;
 
 	&.has-safe-area {
-		bottom: calc(24rpx + env(safe-area-inset-bottom, 0px));
+		bottom: calc(16rpx + constant(safe-area-inset-bottom));
+		bottom: calc(16rpx + env(safe-area-inset-bottom));
 	}
 
 	&.is-disabled {
-		opacity: 0.48;
-		pointer-events: none !important;
+		opacity: 0.5;
 	}
 }
 
-/* 静态隐藏 SVG Filter 容器 */
 .liquid-dock__svg-defs {
 	position: absolute;
 	width: 0;
@@ -1188,122 +959,63 @@ onBeforeUnmount(() => {
 }
 
 /* --------------------------------------------------------------------------
- * 1. 常态液态玻璃主胶囊体 (还原图2：干净通透的浅白玻璃 + 极细玻璃边缘折射圈)
+ * 1. 外层胶囊底栏容器 (overflow: visible 允许按住时水滴透镜上下破界突出)
  * -------------------------------------------------------------------------- */
 .liquid-dock__surface {
 	position: relative;
-	z-index: 1;
-	pointer-events: auto;
-	width: calc(100% - 64rpx);
-	min-height: 124rpx;
-	height: 124rpx;
-	border-radius: 9999rpx;
-	box-sizing: border-box;
-	display: flex;
-	align-items: center;
-	justify-content: space-around;
-	padding: 5px;
-	/* 允许纵向滚动手势，不阻塞正常页面滚动 */
-	touch-action: pan-y;
-	user-select: none;
-	-webkit-user-select: none;
-	overflow: visible;
-	transform: translate3d(0, 0, 0);
-	transition:
-		box-shadow 0.22s ease,
-		background 0.22s ease;
-
-	/* 图2同款：纯净清透的浅白毛玻璃底色 */
-	background: rgba(250, 250, 252, 0.72);
-
-	/* 背景折射模糊与饱和度增透 */
-	-webkit-backdrop-filter: blur(22px) saturate(190%);
-	backdrop-filter: blur(22px) saturate(190%);
-
-	/* 图2同款：外圈极细微灰轮廓线 + 内侧明亮白玻璃折光环 + 柔和浅阴影 */
-	border: 0.5px solid rgba(0, 0, 0, 0.08);
-	box-shadow:
-		inset 0 0 0 1.5px rgba(255, 255, 255, 0.88),
-		inset 0 1px 2px rgba(255, 255, 255, 0.95),
-		0 6px 24px rgba(0, 0, 0, 0.06),
-		0 1px 4px rgba(0, 0, 0, 0.04);
-}
-
-/* 玻璃内圈极细折射环 */
-.liquid-dock__glass-bevel {
-	position: absolute;
-	top: 1.5px;
-	right: 1.5px;
-	bottom: 1.5px;
-	left: 1.5px;
-	border-radius: 9999rpx;
-	pointer-events: none;
-	border: 0.5px solid rgba(0, 0, 0, 0.04);
-}
-
-/* --------------------------------------------------------------------------
- * 2. 共享连续移动的 Active 高亮层 (.liquid-dock__active-indicator)
- *    - 外层轨道只做 translate3d 平滑位移，支持中途无缝转向，不回弹到旧位置
- *    - 内层胶囊体独立做 scale3d 液态拉伸与自然恢复，避免 transform 互相覆盖
- * -------------------------------------------------------------------------- */
-.liquid-dock__active-indicator {
-	position: absolute;
-	top: 5px;
-	bottom: 5px;
-	left: 5px;
-	pointer-events: none;
-	z-index: 1;
-	will-change: transform, opacity;
-
-	/* 首次挂载完成后启用平滑连续移动曲线 */
-	&.is-ready {
-		transition:
-			transform var(--active-move-duration, 270ms) cubic-bezier(0.22, 1, 0.36, 1),
-			opacity 180ms ease;
-	}
-
-	/* 当液态凸透镜激活覆盖时，底层高亮层柔和降低存在感，与凸透镜自然融为一体，不瞬间消失 */
-	&.is-under-lens {
-		opacity: 0.42;
-	}
-}
-
-.liquid-dock__active-indicator-body {
-	position: relative;
 	width: 100%;
-	height: 100%;
-	border-radius: 9999rpx;
-	/* 图2 Today 同款：干净柔和的 iOS 浅灰半透明液态胶囊底色 + 细腻顶部内高光 */
-	background: rgba(118, 118, 128, 0.13);
-	box-shadow:
-		inset 0 1px 1.5px rgba(255, 255, 255, 0.55),
-		inset 0 -0.5px 1px rgba(0, 0, 0, 0.03);
-	will-change: transform;
-	transition: transform 185ms cubic-bezier(0.22, 1, 0.36, 1);
-
-	&.phase-stretching {
-		transition: transform 105ms cubic-bezier(0.2, 0.9, 0.3, 1);
-	}
+	height: 62px;
+	padding: 4px;
+	box-sizing: border-box;
+	border-radius: 9999px;
+	pointer-events: auto;
+	overflow: visible !important;
+	touch-action: none;
+	cursor: pointer;
 }
 
-.liquid-dock__active-indicator-highlight {
+/* 独立承担底栏高透液态毛玻璃背景，直接折射底下实时全屏地图画面 */
+.liquid-dock__surface-glass {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	left: 0;
+	border-radius: 9999px;
+	overflow: hidden;
+	pointer-events: none;
+	z-index: 1;
+
+	background: rgba(255, 255, 255, 0.65);
+	-webkit-backdrop-filter: blur(20px) saturate(180%) contrast(104%);
+	backdrop-filter: blur(20px) saturate(180%) contrast(104%);
+
+	border: 1px solid rgba(255, 255, 255, 0.88);
+	box-shadow:
+		0 0 0 0.5px rgba(0, 0, 0, 0.05),
+		inset 0 1.5px 2px rgba(255, 255, 255, 0.96),
+		inset 0 -1.5px 2px rgba(255, 255, 255, 0.78),
+		0 10px 28px rgba(15, 23, 42, 0.10),
+		0 2px 8px rgba(15, 23, 42, 0.04);
+}
+
+.liquid-dock__glass-rim {
 	position: absolute;
 	top: 1px;
-	left: 20%;
-	right: 20%;
-	height: 1px;
-	border-radius: 9999rpx;
-	background: linear-gradient(
-		90deg,
-		rgba(255, 255, 255, 0) 0%,
-		rgba(255, 255, 255, 0.72) 50%,
-		rgba(255, 255, 255, 0) 100%
-	);
+	right: 1px;
+	bottom: 1px;
+	left: 1px;
+	border-radius: 9999px;
 	pointer-events: none;
+	border: 1px solid rgba(255, 255, 255, 0.55);
+	box-shadow:
+		inset 2px 0 3px rgba(255, 255, 255, 0.7),
+		inset -2px 0 3px rgba(255, 255, 255, 0.7),
+		inset 0 1px 2px rgba(0, 0, 0, 0.02);
 }
 
 /* --------------------------------------------------------------------------
- * 3. 底层导航项目列表（普通状态下保持原来的尺寸和位置，不发生布局抖动）
+ * 2. 底层默认导航项（Normal Layer）：深邃纯黑 (#1C1C1E)
  * -------------------------------------------------------------------------- */
 .liquid-dock__items-layer {
 	position: relative;
@@ -1313,6 +1025,7 @@ onBeforeUnmount(() => {
 	display: flex;
 	align-items: center;
 	justify-content: space-around;
+	box-sizing: border-box;
 }
 
 .liquid-dock__item {
@@ -1322,10 +1035,8 @@ onBeforeUnmount(() => {
 	align-items: center;
 	justify-content: center;
 	height: 100%;
-	min-width: 88rpx;
-	cursor: pointer;
 	box-sizing: border-box;
-	transition: opacity 0.14s ease;
+	flex-shrink: 0;
 
 	&.is-disabled {
 		opacity: 0.35;
@@ -1333,53 +1044,228 @@ onBeforeUnmount(() => {
 	}
 }
 
-/* 独立负责 Icon 轻微缩放 (1.06x) 的包装层，时长 240ms，不产生上下跳动 */
-.liquid-dock__icon-scale {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	transform: scale3d(1, 1, 1);
-	transform-origin: center center;
-	transition: transform var(--icon-scale-duration, 240ms) cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.liquid-dock__item.is-active .liquid-dock__icon-scale {
-	transform: scale3d(1.06, 1.06, 1);
-}
-
 .liquid-dock__icon-wrapper {
 	position: relative;
-	z-index: 1;
-	width: 52rpx;
-	height: 52rpx;
+	width: 26px;
+	height: 26px;
 	display: flex;
 	align-items: center;
 	justify-content: center;
 }
 
-/* 默认图标与激活图标叠放，通过 210ms 透明度渐变实现平滑颜色过渡 */
 .liquid-dock__icon {
-	width: 44rpx;
-	height: 44rpx;
+	width: 24px;
+	height: 24px;
 	display: block;
-	transition: opacity var(--icon-color-duration, 210ms) ease;
 }
 
-.liquid-dock__icon--default {
-	opacity: 1;
+.liquid-dock__label {
+	font-size: 11px;
+	margin-top: 2px;
+	line-height: 1.15;
+	letter-spacing: 0.1px;
+	white-space: nowrap;
+	font-weight: 600;
+}
 
-	&.is-hidden {
-		opacity: 0;
+.liquid-dock__label--normal {
+	color: var(--ios-inactive-black, #1C1C1E);
+}
+
+.liquid-dock__label--active {
+	color: var(--ios-active-orange, #FF5500);
+}
+
+/* --------------------------------------------------------------------------
+ * 3. 顶层双态液态透镜容器 (.liquid-dock__morph-lens)
+ *    常态：内嵌柔和胶囊
+ *    按住/拖动态 (.is-pressing)：破界悬浮 3D 水滴凸透镜
+ * -------------------------------------------------------------------------- */
+.liquid-dock__morph-lens {
+	position: absolute;
+	top: 4px;
+	left: 4px;
+	border-radius: 9999px;
+	pointer-events: none !important;
+	z-index: 6;
+	transform-origin: center center;
+	will-change: transform, width, height;
+
+	&.is-ready:not(.is-dragging) {
+		transition:
+			transform var(--pill-move-duration, 280ms) var(--pill-ease),
+			width 210ms var(--pill-ease),
+			height 210ms var(--pill-ease);
+	}
+
+	&.is-dragging {
+		transition:
+			width 180ms var(--pill-ease),
+			height 180ms var(--pill-ease);
 	}
 }
 
-.liquid-dock__icon--active {
+/* 3.1 材质基底：从常态柔和胶囊平滑过渡到按住态高透凸透镜水滴 */
+.liquid-dock__morph-backdrop {
 	position: absolute;
-	top: 4rpx;
-	left: 4rpx;
-	opacity: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	left: 0;
+	border-radius: 9999px;
+	pointer-events: none;
+	z-index: 1;
 
-	&.is-visible {
+	/* 常态：柔和通透暖灰白内嵌胶囊色 */
+	background: rgba(236, 234, 232, 0.72);
+	box-shadow:
+		inset 0 1px 1px rgba(255, 255, 255, 0.75),
+		0 1px 2px rgba(0, 0, 0, 0.02);
+	transition: background 180ms ease, box-shadow 180ms ease, backdrop-filter 180ms ease;
+}
+
+/* 按住/拖动时切换为 3D 液态玻璃水滴透镜（折射底下实时地图与暖橙高亮层） */
+.liquid-dock__morph-lens.is-pressing .liquid-dock__morph-backdrop {
+	background: linear-gradient(
+		180deg,
+		rgba(255, 255, 255, 0.28) 0%,
+		rgba(255, 255, 255, 0.06) 35%,
+		rgba(255, 255, 255, 0.04) 68%,
+		rgba(255, 255, 255, 0.22) 100%
+	);
+	-webkit-backdrop-filter: blur(2px) saturate(185%) contrast(1.05) brightness(1.03);
+	backdrop-filter: blur(2px) saturate(185%) contrast(1.05) brightness(1.03);
+	box-shadow:
+		0 10px 26px rgba(15, 23, 42, 0.14),
+		0 3px 8px rgba(15, 23, 42, 0.06),
+		inset 0 0 12px rgba(255, 255, 255, 0.65);
+}
+
+/* 3.2 内部裁剪与边缘弯月面折射舞台 */
+.liquid-dock__morph-viewport {
+	position: relative;
+	width: 100%;
+	height: 100%;
+	border-radius: 9999px;
+	overflow: hidden;
+	z-index: 2;
+}
+
+.liquid-dock__morph-refraction-stage {
+	position: relative;
+	width: 100%;
+	height: 100%;
+	border-radius: 9999px;
+
+	/* 按住态开启跑道型胶囊液态玻璃凸透镜液化折射 */
+	&.is-lens-active {
+		-webkit-filter: url(#sphere-rim-refraction);
+		filter: url(#sphere-rim-refraction);
+	}
+}
+
+.liquid-dock__morph-track {
+	position: absolute;
+	top: 0;
+	left: 0;
+	display: flex;
+	align-items: center;
+	justify-content: space-around;
+	will-change: transform;
+
+	&.is-ready:not(.is-dragging) {
+		transition: transform var(--pill-move-duration, 280ms) var(--pill-ease);
+	}
+
+	&.is-dragging {
+		transition: none;
+	}
+}
+
+/* --------------------------------------------------------------------------
+ * 3.3 液态玻璃水滴边缘微色散（暖橙、金黄、青色微光泽）与顶部高光胶囊条
+ * -------------------------------------------------------------------------- */
+
+.liquid-dock__droplet-prism-rim {
+	position: absolute;
+	top: 0.5px;
+	right: 0.5px;
+	bottom: 0.5px;
+	left: 0.5px;
+	padding: 3px;
+	box-sizing: border-box;
+	border-radius: 9999px;
+	pointer-events: none;
+	z-index: 3;
+	opacity: 0;
+	transition: opacity 160ms ease;
+
+	background: conic-gradient(
+		from 195deg at 50% 50%,
+		rgba(255, 110, 40, 0.30) 0deg,
+		rgba(255, 200, 60, 0.26) 65deg,
+		rgba(0, 210, 255, 0.20) 140deg,
+		rgba(255, 255, 255, 0.45) 215deg,
+		rgba(255, 165, 50, 0.28) 295deg,
+		rgba(255, 110, 40, 0.30) 360deg
+	);
+	-webkit-mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor;
+	mask-composite: exclude;
+	filter: blur(0.6px);
+}
+
+/* 水滴顶部正中央通透的纯白玻璃高光小胶囊 */
+.liquid-dock__droplet-top-pill-highlight {
+	position: absolute;
+	top: 4px;
+	left: 50%;
+	transform: translateX(-50%);
+	width: 32px;
+	height: 5px;
+	border-radius: 9999px;
+	pointer-events: none;
+	z-index: 5;
+	opacity: 0;
+	transition: opacity 160ms ease;
+
+	background: linear-gradient(
+		180deg,
+		rgba(255, 255, 255, 0.45) 0%,
+		rgba(255, 255, 255, 0.88) 100%
+	);
+	border: 0.8px solid rgba(255, 255, 255, 0.92);
+	box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.95);
+}
+
+/* 跑道型水滴外圈纯净透明玻璃立体高光与自然明暗内折光（无蓝色阴影） */
+.liquid-dock__droplet-bevel-ring {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	left: 0;
+	border-radius: 9999px;
+	pointer-events: none;
+	z-index: 4;
+	opacity: 0;
+	transition: opacity 160ms ease;
+
+	border: 1px solid rgba(255, 255, 255, 0.92);
+	box-shadow:
+		inset 0 2.5px 4px rgba(255, 255, 255, 0.95),
+		inset 0 -2.5px 4px rgba(15, 23, 42, 0.10),
+		inset 2px 0 4px rgba(255, 255, 255, 0.55),
+		inset -2px 0 4px rgba(255, 255, 255, 0.55),
+		0 0 0 0.5px rgba(15, 23, 42, 0.08);
+}
+
+.liquid-dock__morph-lens.is-pressing {
+	.liquid-dock__droplet-prism-rim,
+	.liquid-dock__droplet-top-pill-highlight,
+	.liquid-dock__droplet-bevel-ring {
 		opacity: 1;
 	}
 }
@@ -1387,348 +1273,52 @@ onBeforeUnmount(() => {
 /* 徽标 Badge */
 .liquid-dock__badge {
 	position: absolute;
-	top: -4rpx;
-	right: -12rpx;
-	min-width: 28rpx;
-	height: 28rpx;
-	padding: 0 8rpx;
+	top: -2px;
+	right: -6px;
+	min-width: 14px;
+	height: 14px;
+	padding: 0 4px;
 	background: #FF3B30;
-	border: 2rpx solid #FFFFFF;
-	border-radius: 9999rpx;
+	border: 1px solid #FFFFFF;
+	border-radius: 9999px;
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	box-shadow: 0 2rpx 8rpx rgba(255, 59, 48, 0.45);
+	box-shadow: 0 1px 4px rgba(255, 59, 48, 0.45);
 	z-index: 3;
 
 	&.is-dot {
-		min-width: 16rpx;
-		width: 16rpx;
-		height: 16rpx;
+		min-width: 8px;
+		width: 8px;
+		height: 8px;
 		padding: 0;
-		right: 0rpx;
-		top: 0rpx;
+		right: -1px;
+		top: -1px;
 	}
 }
 
 .liquid-dock__badge-text {
-	font-size: 18rpx;
+	font-size: 9px;
 	font-weight: 700;
 	color: #FFFFFF;
 	line-height: 1;
 }
 
-/* 文字标签：与图标颜色同步 210ms 平滑过渡 */
-.liquid-dock__label {
-	position: relative;
-	z-index: 1;
-	font-size: 22rpx;
-	margin-top: 4rpx;
-	color: #64748B;
-	font-weight: 500;
-	letter-spacing: 0.5rpx;
-	line-height: 1.2;
-	transition:
-		color var(--icon-color-duration, 210ms) ease,
-		font-weight var(--icon-color-duration, 210ms) ease;
-}
-
-.liquid-dock__item.is-active {
-	.liquid-dock__label {
-		color: #FF5722;
-		font-weight: 600;
-	}
-}
-
 /* --------------------------------------------------------------------------
- * 4. 局部液态凸透镜覆盖层 (.liquid-dock__lens)
- * -------------------------------------------------------------------------- */
-.liquid-dock__lens {
-	position: absolute;
-	top: 0;
-	left: 0;
-	width: var(--lens-width, 124px);
-	height: var(--lens-height, 78px);
-	border-radius: 9999px;
-	pointer-events: none !important;
-	z-index: 6;
-	opacity: 0;
-	transform-origin: center center;
-	will-change: transform, opacity;
-	transition:
-		opacity var(--lens-leave-duration, 190ms) ease-out,
-		transform var(--lens-leave-duration, 190ms) cubic-bezier(0.22, 1, 0.36, 1);
-
-	/* 进入显现阶段 */
-	&.is-entering {
-		opacity: 1;
-		transition:
-			opacity var(--lens-enter-duration, 150ms) ease-out,
-			transform var(--lens-enter-duration, 150ms) cubic-bezier(0.22, 1.08, 0.36, 1);
-	}
-
-	/* 桌面端跨 Icon 悬停移动 */
-	&.is-moving.mode-mouse {
-		opacity: 1;
-		transition:
-			opacity 120ms ease-out,
-			transform var(--lens-move-duration, 170ms) cubic-bezier(0.22, 1, 0.36, 1);
-	}
-
-	/* 触摸端跟手滑动：与内部镜像场景保持零延迟实时同步 */
-	&.is-moving.mode-touch {
-		opacity: 1;
-		transition: opacity 90ms ease-out;
-	}
-
-	/* 离开淡出阶段 */
-	&.is-leaving {
-		opacity: 0;
-	}
-}
-
-/* 4.1 凸透镜光学玻璃基底 */
-.liquid-dock__lens-backdrop {
-	position: absolute;
-	top: 0;
-	right: 0;
-	bottom: 0;
-	left: 0;
-	border-radius: 9999px;
-	pointer-events: none;
-
-	background: radial-gradient(
-		ellipse 56% 58% at 50% 48%,
-		rgba(255, 255, 255, var(--lens-bg-opacity, 0.16)) 0%,
-		rgba(255, 255, 255, 0.28) 56%,
-		rgba(242, 248, 255, 0.52) 84%,
-		rgba(255, 255, 255, 0.78) 100%
-	);
-
-	-webkit-backdrop-filter: blur(10px) saturate(210%) contrast(106%);
-	backdrop-filter: blur(10px) saturate(210%) contrast(106%);
-
-	border: 1px solid rgba(255, 255, 255, 0.88);
-
-	box-shadow:
-		inset 0 2px 3px rgba(255, 255, 255, 0.98),
-		inset 2px 0 3.5px rgba(255, 255, 255, 0.72),
-		inset -2px -2.5px 6px rgba(15, 28, 48, 0.14),
-		inset 0 -1.5px 2.5px rgba(255, 255, 255, 0.84),
-		0 8px 22px rgba(15, 28, 48, 0.14),
-		0 2px 6px rgba(15, 28, 48, 0.06);
-}
-
-/* 4.2 透镜内部局部放大与边缘折射裁剪视口 */
-.liquid-dock__lens-viewport {
-	position: absolute;
-	top: 1.5px;
-	right: 1.5px;
-	bottom: 1.5px;
-	left: 1.5px;
-	border-radius: 9999px;
-	overflow: hidden;
-	pointer-events: none;
-	z-index: 2;
-}
-
-.liquid-dock__lens-refraction-stage {
-	position: relative;
-	width: 100%;
-	height: 100%;
-	pointer-events: none;
-}
-
-/* 与 Dock 表面严格对齐的局部放大镜像场景 */
-.liquid-dock__lens-scene {
-	position: absolute;
-	top: 0;
-	left: 0;
-	padding: 5px;
-	box-sizing: border-box;
-	display: flex;
-	align-items: center;
-	justify-content: space-around;
-	transform-origin: 0 0;
-	pointer-events: none;
-	will-change: transform;
-}
-
-.liquid-dock__lens.is-moving.mode-mouse .liquid-dock__lens-scene {
-	transition: transform var(--lens-move-duration, 170ms) cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-/* 透镜内部视觉副本的文字清晰度与微色散修饰 */
-.liquid-dock__item--clone {
-	transform-origin: center center;
-	will-change: transform;
-
-	.liquid-dock__icon-wrapper {
-		filter:
-			drop-shadow(-0.6px -0.4px 0 rgba(56, 189, 248, 0.22))
-			drop-shadow(0.6px 0.4px 0 rgba(255, 87, 34, 0.22));
-	}
-
-	.liquid-dock__label {
-		font-weight: 600;
-	}
-}
-
-/* 4.3 透镜边缘轻微折射色散环与顶部/侧边高光 */
-.liquid-dock__lens-chromatic-ring {
-	position: absolute;
-	top: 1px;
-	right: 1px;
-	bottom: 1px;
-	left: 1px;
-	border-radius: 9999px;
-	pointer-events: none;
-	z-index: 3;
-	box-shadow:
-		inset 1.5px 1px 3px rgba(56, 189, 248, 0.22),
-		inset -1.5px -1px 3px rgba(255, 98, 46, 0.22);
-	opacity: 0.85;
-}
-
-.liquid-dock__lens-rim-light {
-	position: absolute;
-	top: 0;
-	right: 0;
-	bottom: 0;
-	left: 0;
-	border-radius: 9999px;
-	pointer-events: none;
-	z-index: 4;
-	border: 1px solid rgba(255, 255, 255, 0.76);
-	box-shadow:
-		inset 0 1.5px 2.5px rgba(255, 255, 255, 0.96),
-		inset 0 -1.5px 2.5px rgba(15, 28, 48, 0.10);
-	opacity: var(--lens-specular-opacity, 0.92);
-}
-
-/* 顶部主受光高光弧 */
-.liquid-dock__lens-specular-top {
-	position: absolute;
-	top: 2.5px;
-	left: 16%;
-	right: 16%;
-	height: 11px;
-	border-radius: 9999px;
-	pointer-events: none;
-	z-index: 4;
-	background: linear-gradient(
-		180deg,
-		rgba(255, 255, 255, 0.82) 0%,
-		rgba(255, 255, 255, 0.12) 65%,
-		rgba(255, 255, 255, 0) 100%
-	);
-	opacity: var(--lens-specular-opacity, 0.92);
-}
-
-/* 底部曲率反光细弧 */
-.liquid-dock__lens-specular-bottom {
-	position: absolute;
-	bottom: 2px;
-	left: 22%;
-	right: 22%;
-	height: 3.5px;
-	border-radius: 9999px;
-	pointer-events: none;
-	z-index: 4;
-	background: linear-gradient(
-		90deg,
-		rgba(255, 255, 255, 0) 0%,
-		rgba(255, 255, 255, 0.80) 50%,
-		rgba(255, 255, 255, 0) 100%
-	);
-}
-
-/* --------------------------------------------------------------------------
- * 5. 暗色模式适配 (Theme Dark)
+ * 4. 暗色模式适配 (Theme Dark)
  * -------------------------------------------------------------------------- */
 .theme-dark {
-	.liquid-dock__surface {
-		background: rgba(28, 34, 46, 0.72);
-		border-color: rgba(255, 255, 255, 0.14);
-		box-shadow:
-			inset 0 0 0 1px rgba(255, 255, 255, 0.18),
-			0 10px 28px rgba(0, 0, 0, 0.42);
+	.liquid-dock__surface-glass {
+		background: rgba(28, 30, 38, 0.82);
+		border-color: rgba(255, 255, 255, 0.16);
 	}
 
-	.liquid-dock__active-indicator-body {
+	.liquid-dock__morph-backdrop {
 		background: rgba(255, 255, 255, 0.14);
-		box-shadow:
-			inset 0 1px 1.5px rgba(255, 255, 255, 0.24),
-			inset 0 -0.5px 1px rgba(0, 0, 0, 0.35);
 	}
 
-	.liquid-dock__lens-backdrop {
-		background: radial-gradient(
-			ellipse 56% 58% at 50% 48%,
-			rgba(30, 41, 59, 0.22) 0%,
-			rgba(30, 41, 59, 0.36) 60%,
-			rgba(51, 65, 85, 0.50) 86%,
-			rgba(255, 255, 255, 0.24) 100%
-		);
-		border-color: rgba(255, 255, 255, 0.32);
-		box-shadow:
-			inset 0 1.5px 2.5px rgba(255, 255, 255, 0.38),
-			inset -2px -2px 6px rgba(0, 0, 0, 0.55),
-			0 10px 26px rgba(0, 0, 0, 0.55);
-	}
-
-	.liquid-dock__lens-specular-top {
-		background: linear-gradient(
-			180deg,
-			rgba(255, 255, 255, 0.28) 0%,
-			rgba(255, 255, 255, 0.04) 60%,
-			rgba(255, 255, 255, 0) 100%
-		);
-	}
-
-	.liquid-dock__lens-rim-light {
-		opacity: 0.48;
-	}
-
-	.liquid-dock__label {
-		color: #94A3B8;
-	}
-
-	.liquid-dock__item.is-active .liquid-dock__label {
-		color: #FF7A45;
-	}
-}
-
-/* --------------------------------------------------------------------------
- * 6. 不支持 backdrop-filter 时的优雅降级
- * -------------------------------------------------------------------------- */
-@supports not ((-webkit-backdrop-filter: blur(10px)) or (backdrop-filter: blur(10px))) {
-	.liquid-dock__surface {
-		background: rgba(248, 250, 252, 0.94) !important;
-	}
-
-	.liquid-dock__lens-backdrop {
-		background: radial-gradient(
-			ellipse at center,
-			rgba(255, 255, 255, 0.88) 0%,
-			rgba(242, 248, 255, 0.95) 100%
-		) !important;
-	}
-}
-
-/* --------------------------------------------------------------------------
- * 7. 尊重系统减少动效偏好 (prefers-reduced-motion)
- * -------------------------------------------------------------------------- */
-@media (prefers-reduced-motion: reduce) {
-	.liquid-dock__surface,
-	.liquid-dock__active-indicator,
-	.liquid-dock__active-indicator-body,
-	.liquid-dock__icon-scale,
-	.liquid-dock__lens,
-	.liquid-dock__lens-scene,
-	.liquid-dock__icon,
-	.liquid-dock__label {
-		transition-duration: 0.01ms !important;
+	.liquid-dock__label--normal {
+		color: #F1F5F9;
 	}
 }
 </style>

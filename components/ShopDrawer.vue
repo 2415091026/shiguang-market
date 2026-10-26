@@ -1,11 +1,20 @@
 <template>
-	<view 
-		v-if="shop" 
-		class="shop-drawer-panel" 
-		:class="{ 'is-dragging': isDragging, 'is-closing': isClosing }"
-		:style="drawerDynamicStyle"
-		@click.stop
-	>
+	<view v-if="shop" class="shop-drawer-root">
+		<!-- 跨端兼容防穿透遮罩层 -->
+		<view 
+			class="shop-drawer-mask" 
+			:class="{ 'is-closing': isClosing }"
+			@click="handleSmoothClose"
+			@touchmove.stop.prevent
+		></view>
+
+		<!-- 抽屉面板主体容器 -->
+		<view 
+			class="shop-drawer-panel" 
+			:class="{ 'is-dragging': isDragging, 'is-closing': isClosing }"
+			:style="drawerDynamicStyle"
+			@click.stop
+		>
 		<!-- 1. 顶部抽屉拖拽把手栏（配备物理弹性手势引擎：下拉实时跟随手指 + 柔性阻尼回弹） -->
 		<view 
 			class="drawer-header-bar"
@@ -307,6 +316,7 @@
 				</view>
 			</view>
 		</view>
+		</view>
 	</view>
 </template>
 
@@ -522,40 +532,71 @@ const handleTouchEnd = () => {
 </script>
 
 <style scoped lang="scss">
-/* 抽屉面板主体容器（液态拟物高透玻璃质感 + 苹果级平滑弹簧缓动） */
-.shop-drawer-panel {
-	position: relative;
-	z-index: 99;
-	width: 100%;
-	box-sizing: border-box;
-	border-radius: 40rpx;
-	padding: 16rpx 24rpx 16rpx 24rpx;
-	height: 62vh;
+/* 全屏抽屉外层浮动宿主容器（跨端高层级覆盖） */
+.shop-drawer-root {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 9999;
 	display: flex;
 	flex-direction: column;
-	@include liquid-glass(32px, 0.82, 0.52);
-	border: 1.5rpx solid rgba(255, 255, 255, 0.95);
-	box-shadow: 
-		inset 0 2.5rpx 3rpx rgba(255, 255, 255, 0.98),
-		inset 0 -1.5rpx 2rpx rgba(255, 255, 255, 0.45),
-		0 16rpx 48rpx rgba(25, 45, 65, 0.16);
+	justify-content: flex-end;
+	pointer-events: auto;
+}
+
+/* 跨端高透模糊黑灰遮罩层（点击关闭 + 阻断地图穿透手势） */
+.shop-drawer-mask {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background: rgba(15, 23, 42, 0.45);
+	-webkit-backdrop-filter: blur(4px);
+	backdrop-filter: blur(4px);
+	z-index: 1;
+	transition: opacity 0.24s ease;
+
+	&.is-closing {
+		opacity: 0 !important;
+	}
+}
+
+/* 抽屉面板主体容器（纯白底色 + 坚实高层级 + 硬件加速物理缓动） */
+.shop-drawer-panel {
+	position: relative;
+	z-index: 2;
+	width: 100%;
+	box-sizing: border-box;
+	border-radius: 40rpx 40rpx 0 0;
+	padding: 18rpx 24rpx calc(env(safe-area-inset-bottom) + 20rpx) 24rpx;
+	height: 72vh;
+	max-height: 80vh;
+	display: flex;
+	flex-direction: column;
+	background: #FFFFFF;
+	border-top: 1.5rpx solid #F1F5F9;
+	box-shadow: 0 -12rpx 48rpx rgba(15, 23, 42, 0.20);
 	
 	/* 开启 GPU 独立合成层加速 */
 	will-change: transform, opacity;
-	/* 苹果级高平滑阻尼贝塞尔回弹曲线 */
-	transition: transform 0.36s cubic-bezier(0.18, 0.89, 0.32, 1.05), opacity 0.28s ease;
+	transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.22s ease;
 	transform: translate3d(0, 0, 0);
 
-	/* 拖拽状态下必须消除过渡延迟，实现 0 毫秒极致绝对跟手 */
+	/* 拖拽状态下消除过渡延迟，实现 0 毫秒绝对跟手 */
 	&.is-dragging {
 		transition: none !important;
 	}
 
 	/* 关闭滑落动画 */
 	&.is-closing {
-		transition: transform 0.26s cubic-bezier(0.32, 0, 0.67, 0), opacity 0.22s ease !important;
+		transform: translate3d(0, 100%, 0) !important;
+		opacity: 0.1 !important;
 	}
 }
+
 
 /* 顶部把手栏（下拉收起操作区） */
 .drawer-header-bar {
