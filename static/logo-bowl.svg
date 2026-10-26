@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" fill="none">
+  <!-- 筷子 -->
+  <line x1="38" y1="8" x2="48" y2="24" stroke="#5C3A21" stroke-width="3" stroke-linecap="round"/>
+  <line x1="43" y1="8" x2="52" y2="24" stroke="#5C3A21" stroke-width="3" stroke-linecap="round"/>
+  
+  <!-- 碗内白米饭 -->
+  <path d="M14 30C14 20 22 14 32 14C42 14 50 20 50 30Z" fill="#FFFFFF" stroke="#2C3437" stroke-width="2.5" stroke-linejoin="round"/>
+  <!-- 米饭纹理与热气 -->
+  <path d="M22 22C23 19 26 21 28 19" stroke="#E2E8F0" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M34 20C36 17 38 19 41 18" stroke="#E2E8F0" stroke-width="1.8" stroke-linecap="round"/>
+  <!-- 温暖热气微波 -->
+  <path d="M26 9C26 6 28 6 28 3" stroke="#FFA726" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M34 10C34 7 36 7 36 4" stroke="#FFA726" stroke-width="1.8" stroke-linecap="round"/>
+
+  <!-- 暖橙色圆润大饭碗 -->
+  <path d="M12 28C12 44 20 52 32 52C44 52 52 44 52 28H12Z" fill="#FFA726" stroke="#2C3437" stroke-width="3" stroke-linejoin="round"/>
+  <!-- 碗底座 -->
+  <path d="M24 52L22 56H42L40 52" stroke="#2C3437" stroke-width="3" stroke-linejoin="round" fill="#E65100"/>
+
+  <!-- 拟人化萌脸：可爱笑眼 -->
+  <circle cx="25" cy="38" r="2.2" fill="#2C3437"/>
+  <circle cx="39" cy="38" r="2.2" fill="#2C3437"/>
+  <!-- 害羞腮红 -->
+  <circle cx="21" cy="42" r="2.5" fill="#FF7043" opacity="0.6"/>
+  <circle cx="43" cy="42" r="2.5" fill="#FF7043" opacity="0.6"/>
+  <!-- 治愈微笑嘴巴 -->
+  <path d="M29 42C31 44.5 33 44.5 35 42" stroke="#2C3437" stroke-width="2" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,61 @@
+{
+	"id": "uni-icons",
+	"displayName": "uni-icons 图标",
+	"version": "1.0.0",
+	"description": "图标组件，用于展示常用的图标",
+	"keywords": [
+		"图标",
+		"icons",
+		"uni-ui"
+	],
+	"repository": "https://github.com/dcloudio/uni-ui",
+	"engines": {
+		"HBuilderX": ""
+	},
+	"dcloudext": {
+		"category": [
+			"前端组件",
+			"通用组件"
+		]
+	},
+	"uni_modules": {
+		"dependencies": [],
+		"encrypt": [],
+		"platforms": {
+			"cloud": {
+				"tcb": "y",
+				"aliyun": "y"
+			},
+			"client": {
+				"App": {
+					"app-vue": "y",
+					"app-nvue": "y"
+				},
+				"H5": {
+					"y": "y"
+				},
+				"mp-weixin": {
+					"y": "y"
+				},
+				"mp-alipay": {
+					"y": "y"
+				},
+				"mp-baidu": {
+					"y": "y"
+				},
+				"mp-toutiao": {
+					"y": "y"
+				},
+				"mp-qq": {
+					"y": "y"
+				},
+				"mp-kuaishou": {
+					"y": "y"
+				},
+				"mp-jd": {
+					"y": "y"
+				}
+			}
+		}
+	}
+}
