@@ -12,17 +12,84 @@
 		]"
 		:style="containerStyle"
 	>
-		<!-- 内嵌 SVG 滤镜：采用跑道型胶囊 (Stadium) 边缘弯月面折射贴图，严格匹配胶囊宽高比 -->
+		<!-- #ifndef MP -->
+		<!-- 内嵌 SVG 滤镜（H5 / WebView 端生效；小程序 WXML 不支持内联 SVG filter，小程序端走专属双层阶梯毛玻璃折射方案）：
+		     1. #dock-liquid-refraction：作用于底栏 backdrop-filter，让底栏下方的页面文字与地图产生图 1 同款的柱面玻璃纵向拉伸与边缘液化折射
+		     2. #droplet-liquid-refraction：作用于激活胶囊/按住水滴的 backdrop-filter，让水滴下方的背景产生凸透镜球面液化变形
+		     3. #sphere-rim-refraction：作用于按住态水滴内部克隆层边缘 -->
 		<svg
 			id="liquid-lens-svg"
 			class="liquid-dock__svg-defs"
 			width="0"
 			height="0"
-			:viewBox="`0 0 ${Math.round(currentLensWidth)} ${Math.round(currentLensHeight)}`"
+			:viewBox="`0 0 ${Math.round(dockRect.width)} ${Math.round(dockRect.height)}`"
 			aria-hidden="true"
 			focusable="false"
 		>
 			<defs>
+				<!-- 1. 底栏全局背景液化折射滤镜 (用于 .liquid-dock__surface-glass 的 backdrop-filter) -->
+				<filter
+					id="dock-liquid-refraction"
+					x="0%"
+					y="0%"
+					width="100%"
+					height="100%"
+					filterUnits="objectBoundingBox"
+					primitiveUnits="userSpaceOnUse"
+					color-interpolation-filters="sRGB"
+				>
+					<feImage
+						:href="dockDisplacementDataUrl"
+						:xlink:href="dockDisplacementDataUrl"
+						x="0"
+						y="0"
+						:width="Math.round(dockRect.width)"
+						:height="Math.round(dockRect.height)"
+						preserveAspectRatio="none"
+						result="dockDispMap"
+					/>
+					<feDisplacementMap
+						in="SourceGraphic"
+						in2="dockDispMap"
+						scale="28"
+						xChannelSelector="R"
+						yChannelSelector="G"
+						result="dockRefractedOutput"
+					/>
+				</filter>
+
+				<!-- 2. 胶囊/水滴背景凸透镜液化滤镜 (用于 .liquid-dock__morph-backdrop 的 backdrop-filter) -->
+				<filter
+					id="droplet-liquid-refraction"
+					x="0%"
+					y="0%"
+					width="100%"
+					height="100%"
+					filterUnits="objectBoundingBox"
+					primitiveUnits="userSpaceOnUse"
+					color-interpolation-filters="sRGB"
+				>
+					<feImage
+						:href="dropletBackdropDispDataUrl"
+						:xlink:href="dropletBackdropDispDataUrl"
+						x="0"
+						y="0"
+						:width="Math.round(currentLensWidth)"
+						:height="Math.round(currentLensHeight)"
+						preserveAspectRatio="none"
+						result="dropletDispMap"
+					/>
+					<feDisplacementMap
+						in="SourceGraphic"
+						in2="dropletDispMap"
+						:scale="isPressing ? 34 : 18"
+						xChannelSelector="R"
+						yChannelSelector="G"
+						result="dropletRefractedOutput"
+					/>
+				</filter>
+
+				<!-- 3. 水滴内部边缘轻微弯月面折射 -->
 				<filter
 					id="sphere-rim-refraction"
 					x="-8%"
@@ -54,6 +121,7 @@
 				</filter>
 			</defs>
 		</svg>
+		<!-- #endif -->
 
 		<!-- 外层 iOS 26 液态玻璃长胶囊底栏 (overflow: visible 允许按住时水滴凸透镜上下破界悬浮) -->
 		<view
@@ -286,12 +354,12 @@ const instance = getCurrentInstance()
 const surfaceRef = ref(null)
 
 /**
- * 生成基于“跑道型胶囊有向距离场 (Stadium SDF)”的连续液态凸透镜折射贴图
- * 让整个跑道型水滴具备真实、丝滑的光学液化拉伸与边缘弯月面弯曲效果（严格贴合胶囊宽高比，绝不变圆）
+ * 通用跑道型胶囊 (Stadium SDF) 光学折射贴图生成器（BMP Base64 格式，跨端 100% 同步可用）
+ * @param {number} width 贴图宽度
+ * @param {number} height 贴图高度
+ * @param {number} flatCore 中心平缓区比例 (越小则液化拉伸范围越广，底栏取 0.12 实现图 1 全局文字纵向液化拉伸)
  */
-const createRimOnlySphereBmpDataUrl = () => {
-	const width = 96
-	const height = 56
+const buildStadiumDisplacementBmp = (width, height, flatCore = 0.12) => {
 	const rowSize = Math.floor((24 * width + 31) / 32) * 4
 	const pixelArraySize = rowSize * height
 	const fileSize = 54 + pixelArraySize
@@ -313,7 +381,6 @@ const createRimOnlySphereBmpDataUrl = () => {
 	const halfH = (height - 1) / 2
 	const aspect = width / height
 	const seg = Math.max(0, aspect - 1.0)
-	const flatCore = 0.74
 
 	for (let y = 0; y < height; y++) {
 		const ny = (y - halfH) / halfH
@@ -328,11 +395,12 @@ const createRimOnlySphereBmpDataUrl = () => {
 
 			if (d > flatCore && d < 1.0) {
 				const u = (d - flatCore) / (1.0 - flatCore)
-				const rimBell = Math.sin(Math.PI * u) * Math.pow(u, 0.85)
+				// 柱面凸透镜折射曲线：将上下边缘的文字向玻璃内部纵向拉伸液化（还原图 1 “个同事的 iPhone” 纵向拉长液化效果）
+				const rimBell = Math.sin(Math.PI * Math.pow(u, 0.72)) * (0.45 + 0.55 * u)
 				const ux = vx / d
 				const uy = vy / d
-				const dispX = ux * rimBell
-				const dispY = uy * rimBell
+				const dispX = -ux * rimBell
+				const dispY = -uy * rimBell
 				rVal = Math.max(0, Math.min(255, Math.round(128 + dispX * 124)))
 				gVal = Math.max(0, Math.min(255, Math.round(128 + dispY * 124)))
 			}
@@ -359,66 +427,82 @@ const createRimOnlySphereBmpDataUrl = () => {
 	return `data:image/bmp;base64,${base64}`
 }
 
-const rimDisplacementDataUrl = ref(createRimOnlySphereBmpDataUrl())
+// 1. 底栏全局液化折射贴图（长胶囊柱面镜：让底栏下方的地图文字与页面文字产生纵向液化拉长与两端弧形弯曲）
+const dockDisplacementDataUrl = ref(buildStadiumDisplacementBmp(220, 44, 0.08))
+// 2. 激活胶囊/按住水滴的背景液化贴图（让水滴下方的背景产生强烈的球面凸透镜液化放大）
+const dropletBackdropDispDataUrl = ref(buildStadiumDisplacementBmp(96, 56, 0.14))
+// 3. 水滴内部克隆图标层的轻微边缘折射贴图（中心 74% 平坦，保护“首页”文字不被裁切）
+const rimDisplacementDataUrl = ref(buildStadiumDisplacementBmp(96, 56, 0.74))
 
 /**
- * H5 / WebView 下使用 Canvas 生成 160x96 高精度跑道型胶囊液化折射贴图
+ * H5 / WebView 下使用 Canvas 升级高精度液化折射贴图
  */
 const upgradeRimDisplacementWithCanvas = () => {
 	if (typeof document === 'undefined') return
-	try {
-		const width = 160
-		const height = 96
-		const canvas = document.createElement('canvas')
-		canvas.width = width
-		canvas.height = height
-		const ctx = canvas.getContext('2d')
-		if (!ctx) return
+	const buildCanvasPng = (width, height, flatCore, invertSign = true) => {
+		try {
+			const canvas = document.createElement('canvas')
+			canvas.width = width
+			canvas.height = height
+			const ctx = canvas.getContext('2d')
+			if (!ctx) return null
 
-		const imgData = ctx.createImageData(width, height)
-		const data = imgData.data
-		const halfW = (width - 1) / 2
-		const halfH = (height - 1) / 2
-		const aspect = width / height
-		const seg = Math.max(0, aspect - 1.0)
-		const flatCore = 0.74
+			const imgData = ctx.createImageData(width, height)
+			const data = imgData.data
+			const halfW = (width - 1) / 2
+			const halfH = (height - 1) / 2
+			const aspect = width / height
+			const seg = Math.max(0, aspect - 1.0)
+			const sign = invertSign ? -1 : 1
 
-		for (let y = 0; y < height; y++) {
-			const ny = (y - halfH) / halfH
-			for (let x = 0; x < width; x++) {
-				const nx = ((x - halfW) / halfW) * aspect
-				const qx = Math.max(-seg, Math.min(seg, nx))
-				const vx = nx - qx
-				const vy = ny
-				const d = Math.sqrt(vx * vx + vy * vy)
-				let rVal = 128
-				let gVal = 128
+			for (let y = 0; y < height; y++) {
+				const ny = (y - halfH) / halfH
+				for (let x = 0; x < width; x++) {
+					const nx = ((x - halfW) / halfW) * aspect
+					const qx = Math.max(-seg, Math.min(seg, nx))
+					const vx = nx - qx
+					const vy = ny
+					const d = Math.sqrt(vx * vx + vy * vy)
+					let rVal = 128
+					let gVal = 128
 
-				if (d > flatCore && d < 1.0) {
-					const u = (d - flatCore) / (1.0 - flatCore)
-					const rimBell = Math.sin(Math.PI * u) * Math.pow(u, 0.85)
-					const ux = vx / d
-					const uy = vy / d
-					const dispX = ux * rimBell
-					const dispY = uy * rimBell
-					rVal = Math.max(0, Math.min(255, Math.round(128 + dispX * 125)))
-					gVal = Math.max(0, Math.min(255, Math.round(128 + dispY * 125)))
+					if (d > flatCore && d < 1.0) {
+						const u = (d - flatCore) / (1.0 - flatCore)
+						const rimBell = Math.sin(Math.PI * Math.pow(u, 0.72)) * (0.45 + 0.55 * u)
+						const ux = vx / d
+						const uy = vy / d
+						const dispX = sign * ux * rimBell
+						const dispY = sign * uy * rimBell
+						rVal = Math.max(0, Math.min(255, Math.round(128 + dispX * 125)))
+						gVal = Math.max(0, Math.min(255, Math.round(128 + dispY * 125)))
+					}
+
+					const p = (y * width + x) * 4
+					data[p] = rVal
+					data[p + 1] = gVal
+					data[p + 2] = 128
+					data[p + 3] = 255
 				}
-
-				const p = (y * width + x) * 4
-				data[p] = rVal
-				data[p + 1] = gVal
-				data[p + 2] = 128
-				data[p + 3] = 255
 			}
-		}
 
-		ctx.putImageData(imgData, 0, 0)
-		const url = canvas.toDataURL('image/png')
-		if (url && url.startsWith('data:image/png')) {
-			rimDisplacementDataUrl.value = url
+			ctx.putImageData(imgData, 0, 0)
+			const url = canvas.toDataURL('image/png')
+			return url && url.startsWith('data:image/png') ? url : null
+		} catch (e) {
+			return null
 		}
-	} catch (e) {}
+	}
+
+	const dockW = Math.max(Math.round(dockRect.value.width || 348), 200)
+	const dockH = Math.max(Math.round(dockRect.value.height || 62), 48)
+	const dockUrl = buildCanvasPng(dockW, dockH, 0.08, true)
+	if (dockUrl) dockDisplacementDataUrl.value = dockUrl
+
+	const dropletUrl = buildCanvasPng(160, 96, 0.14, true)
+	if (dropletUrl) dropletBackdropDispDataUrl.value = dropletUrl
+
+	const rimUrl = buildCanvasPng(160, 96, 0.74, false)
+	if (rimUrl) rimDisplacementDataUrl.value = rimUrl
 }
 
 /**
@@ -575,6 +659,7 @@ const measureSurfaceRect = (callback) => {
 						width: rect.width,
 						height: rect.height || DOCK_CONFIG.dockHeight
 					}
+					upgradeRimDisplacementWithCanvas()
 				}
 				if (typeof callback === 'function') {
 					callback()
@@ -974,7 +1059,7 @@ onBeforeUnmount(() => {
 	cursor: pointer;
 }
 
-/* 独立承担底栏高透液态毛玻璃背景，直接折射底下实时全屏地图画面 */
+/* 底栏液态玻璃本体：参考苹果原生 iOS 26 液态玻璃，完全纯净无杂色，高透微磨砂，直接透出底下主体的文字与地图纹理 */
 .liquid-dock__surface-glass {
 	position: absolute;
 	top: 0;
@@ -986,32 +1071,67 @@ onBeforeUnmount(() => {
 	pointer-events: none;
 	z-index: 1;
 
-	background: rgba(255, 255, 255, 0.65);
-	-webkit-backdrop-filter: blur(20px) saturate(180%) contrast(104%);
-	backdrop-filter: blur(20px) saturate(180%) contrast(104%);
+	/* #ifndef MP */
+	/* H5 / WebView 端：极薄透明玻璃底 + SVG 柱面透镜液化折射滤镜 (#dock-liquid-refraction) + 柔和微模糊 2.5px */
+	background: linear-gradient(
+		180deg,
+		rgba(255, 255, 255, 0.24) 0%,
+		rgba(255, 255, 255, 0.14) 50%,
+		rgba(255, 255, 255, 0.20) 100%
+	);
+	-webkit-backdrop-filter: url(#dock-liquid-refraction) blur(2.5px) saturate(150%);
+	backdrop-filter: url(#dock-liquid-refraction) blur(2.5px) saturate(150%);
+	/* #endif */
 
-	border: 1px solid rgba(255, 255, 255, 0.88);
+	/* #ifdef MP */
+	/* 小程序端（不支持 CSS backdrop-filter: url(#svg)，必须使用纯正 blur + saturate 才不会导致整条 backdrop-filter 失效）：
+	   采用适度通透磨砂 blur(7px) + 外圈高折射弯月面环，兼顾毛玻璃模糊感与透字效果 */
+	background: linear-gradient(
+		180deg,
+		rgba(255, 255, 255, 0.34) 0%,
+		rgba(255, 255, 255, 0.20) 50%,
+		rgba(255, 255, 255, 0.28) 100%
+	);
+	-webkit-backdrop-filter: blur(7px) saturate(165%) contrast(1.04);
+	backdrop-filter: blur(7px) saturate(165%) contrast(1.04);
+	/* #endif */
+
+	/* 原生液态玻璃标志性的双层银白边：外侧 0.5px 极细浅灰轮廓 + 内侧 1.5px 纯白高光玻璃厚度边 */
+	border: 0.5px solid rgba(0, 0, 0, 0.11);
 	box-shadow:
-		0 0 0 0.5px rgba(0, 0, 0, 0.05),
-		inset 0 1.5px 2px rgba(255, 255, 255, 0.96),
-		inset 0 -1.5px 2px rgba(255, 255, 255, 0.78),
-		0 10px 28px rgba(15, 23, 42, 0.10),
-		0 2px 8px rgba(15, 23, 42, 0.04);
+		inset 0 0 0 1.5px rgba(255, 255, 255, 0.84),
+		inset 0 2px 4px rgba(255, 255, 255, 0.90),
+		inset 0 -1px 2px rgba(0, 0, 0, 0.04),
+		0 8px 24px rgba(15, 23, 42, 0.08),
+		0 2px 6px rgba(15, 23, 42, 0.04);
 }
 
+/* 玻璃曲面边缘的纯净白光折射环：在小程序端同时叠加高折射边缘模糊环，模拟玻璃边缘弯月面光学畸变 */
 .liquid-dock__glass-rim {
 	position: absolute;
-	top: 1px;
-	right: 1px;
-	bottom: 1px;
-	left: 1px;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	left: 0;
+	padding: 3.5px;
+	box-sizing: border-box;
 	border-radius: 9999px;
 	pointer-events: none;
-	border: 1px solid rgba(255, 255, 255, 0.55);
-	box-shadow:
-		inset 2px 0 3px rgba(255, 255, 255, 0.7),
-		inset -2px 0 3px rgba(255, 255, 255, 0.7),
-		inset 0 1px 2px rgba(0, 0, 0, 0.02);
+	background: linear-gradient(
+		180deg,
+		rgba(255, 255, 255, 0.92) 0%,
+		rgba(255, 255, 255, 0.28) 50%,
+		rgba(255, 255, 255, 0.80) 100%
+	);
+	/* #ifdef MP */
+	-webkit-backdrop-filter: blur(14px) saturate(190%) brightness(1.06);
+	backdrop-filter: blur(14px) saturate(190%) brightness(1.06);
+	/* #endif */
+	-webkit-mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor;
+	mask-composite: exclude;
 }
 
 /* --------------------------------------------------------------------------
@@ -1105,7 +1225,7 @@ onBeforeUnmount(() => {
 	}
 }
 
-/* 3.1 材质基底：从常态柔和胶囊平滑过渡到按住态高透凸透镜水滴 */
+/* 3.1 材质基底：参考最新上传截图，常态为清透柔和的浅灰半透明胶囊，底下主体文字与地图依然清晰可透 */
 .liquid-dock__morph-backdrop {
 	position: absolute;
 	top: 0;
@@ -1116,26 +1236,38 @@ onBeforeUnmount(() => {
 	pointer-events: none;
 	z-index: 1;
 
-	/* 常态：柔和通透暖灰白内嵌胶囊色 */
-	background: rgba(236, 234, 232, 0.72);
-	box-shadow:
-		inset 0 1px 1px rgba(255, 255, 255, 0.75),
-		0 1px 2px rgba(0, 0, 0, 0.02);
+	/* 常态：纯净的 6.5% 浅灰半透胶囊 */
+	background: rgba(0, 0, 0, 0.065);
+	/* #ifndef MP */
+	-webkit-backdrop-filter: url(#droplet-liquid-refraction) blur(1.5px) saturate(140%);
+	backdrop-filter: url(#droplet-liquid-refraction) blur(1.5px) saturate(140%);
+	/* #endif */
+	/* #ifdef MP */
+	-webkit-backdrop-filter: blur(5px) saturate(155%);
+	backdrop-filter: blur(5px) saturate(155%);
+	/* #endif */
+	box-shadow: none;
 	transition: background 180ms ease, box-shadow 180ms ease, backdrop-filter 180ms ease;
 }
 
-/* 按住/拖动时切换为近乎全透明的液态玻璃水滴（参考图 1：内部清澈不遮挡，仅靠边缘光泽与投影体现体积感） */
+/* 按住/拖动时切换为纯净无杂色的透明水滴凸透镜 */
 .liquid-dock__morph-lens.is-pressing .liquid-dock__morph-backdrop {
 	background: linear-gradient(
 		180deg,
-		rgba(255, 255, 255, 0.10) 0%,
-		rgba(255, 255, 255, 0.02) 45%,
-		rgba(255, 255, 255, 0.06) 100%
+		rgba(255, 255, 255, 0.16) 0%,
+		rgba(255, 255, 255, 0.04) 50%,
+		rgba(255, 255, 255, 0.10) 100%
 	);
-	-webkit-backdrop-filter: saturate(160%) brightness(1.04);
-	backdrop-filter: saturate(160%) brightness(1.04);
+	/* #ifndef MP */
+	-webkit-backdrop-filter: url(#droplet-liquid-refraction) blur(1px) saturate(150%);
+	backdrop-filter: url(#droplet-liquid-refraction) blur(1px) saturate(150%);
+	/* #endif */
+	/* #ifdef MP */
+	-webkit-backdrop-filter: blur(3px) saturate(170%) brightness(1.04) contrast(1.06);
+	backdrop-filter: blur(3px) saturate(170%) brightness(1.04) contrast(1.06);
+	/* #endif */
 	box-shadow:
-		0 8px 22px rgba(15, 23, 42, 0.12),
+		0 8px 20px rgba(15, 23, 42, 0.12),
 		0 2px 6px rgba(15, 23, 42, 0.06);
 }
 
@@ -1155,11 +1287,13 @@ onBeforeUnmount(() => {
 	height: 100%;
 	border-radius: 9999px;
 
-	/* 按住态开启跑道型胶囊液态玻璃凸透镜液化折射 */
+	/* #ifndef MP */
+	/* H5/WebView 按住态开启跑道型胶囊液态玻璃凸透镜液化折射 */
 	&.is-lens-active {
 		-webkit-filter: url(#sphere-rim-refraction);
 		filter: url(#sphere-rim-refraction);
 	}
+	/* #endif */
 }
 
 .liquid-dock__morph-track {
@@ -1181,7 +1315,7 @@ onBeforeUnmount(() => {
 }
 
 /* --------------------------------------------------------------------------
- * 3.3 液态玻璃水滴边缘光泽（参考图 1：仅 1.5px 细边棱镜微色散 + 立体明暗描边，内部完全透明不遮挡）
+ * 3.3 液态玻璃水滴边缘光泽（纯净透明玻璃高光边，去除杂乱彩色，内部 100% 透明不遮挡）
  * -------------------------------------------------------------------------- */
 
 .liquid-dock__droplet-prism-rim {
@@ -1190,7 +1324,7 @@ onBeforeUnmount(() => {
 	right: 0;
 	bottom: 0;
 	left: 0;
-	padding: 1.5px;
+	padding: 2.5px;
 	box-sizing: border-box;
 	border-radius: 9999px;
 	pointer-events: none;
@@ -1198,16 +1332,16 @@ onBeforeUnmount(() => {
 	opacity: 0;
 	transition: opacity 160ms ease;
 
-	background: conic-gradient(
-		from 200deg at 50% 50%,
-		rgba(255, 255, 255, 0.95) 0deg,
-		rgba(180, 225, 255, 0.70) 60deg,
-		rgba(255, 255, 255, 0.55) 120deg,
-		rgba(255, 220, 170, 0.60) 190deg,
-		rgba(255, 255, 255, 0.95) 260deg,
-		rgba(200, 235, 255, 0.70) 320deg,
-		rgba(255, 255, 255, 0.95) 360deg
+	background: linear-gradient(
+		180deg,
+		rgba(255, 255, 255, 0.95) 0%,
+		rgba(255, 255, 255, 0.45) 50%,
+		rgba(255, 255, 255, 0.88) 100%
 	);
+	/* #ifdef MP */
+	-webkit-backdrop-filter: blur(12px) saturate(190%) brightness(1.08);
+	backdrop-filter: blur(12px) saturate(190%) brightness(1.08);
+	/* #endif */
 	-webkit-mask:
 		linear-gradient(#000 0 0) content-box,
 		linear-gradient(#000 0 0);
@@ -1215,12 +1349,12 @@ onBeforeUnmount(() => {
 	mask-composite: exclude;
 }
 
-/* 顶部高光条：参考图 1 无独立高光条，按住态保持隐藏 */
+/* 顶部高光条：按住态保持隐藏 */
 .liquid-dock__droplet-top-pill-highlight {
 	display: none;
 }
 
-/* 水滴外圈立体明暗描边：顶部亮边 + 底部暗边，内部无任何填充 */
+/* 水滴外圈立体明暗描边：纯净白亮内边 + 外侧 0.5px 极细浅灰轮廓线 */
 .liquid-dock__droplet-bevel-ring {
 	position: absolute;
 	top: 0;
@@ -1234,11 +1368,9 @@ onBeforeUnmount(() => {
 	transition: opacity 160ms ease;
 
 	box-shadow:
-		inset 0 1.5px 1.5px rgba(255, 255, 255, 0.85),
-		inset 0 -1.5px 2px rgba(15, 23, 42, 0.10),
-		inset 1.5px 0 2px rgba(255, 255, 255, 0.45),
-		inset -1.5px 0 2px rgba(255, 255, 255, 0.45),
-		0 0 0 0.5px rgba(15, 23, 42, 0.10);
+		inset 0 1.5px 1px rgba(255, 255, 255, 0.95),
+		inset 0 -1px 1.5px rgba(0, 0, 0, 0.08),
+		0 0 0 0.5px rgba(0, 0, 0, 0.12);
 }
 
 .liquid-dock__morph-lens.is-pressing {

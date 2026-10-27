@@ -18,7 +18,7 @@
 				</view>
 			</view>
 
-			<!-- 1.2 纯通栏毛玻璃胶囊搜索框（移除冗余“搜一下”按钮，完整展示 Placeholder） -->
+			<!-- 1.2 纯通栏毛玻璃胶囊搜索框（无右侧实体按钮，完整展示 Placeholder） -->
 			<view class="search-capsule-row">
 				<view
 					class="pure-glass-search-bar"
@@ -46,34 +46,6 @@
 						<uni-icons type="clear" size="17" color="#94A3B8"></uni-icons>
 					</view>
 				</view>
-			</view>
-
-			<!-- 1.3 分类横向滚动栏（Category Pills）：紧贴搜索框下方，单胶囊独立毛玻璃 -->
-			<view class="category-pills-row">
-				<scroll-view
-					class="category-scroll"
-					scroll-x
-					:show-scrollbar="false"
-					enhanced
-					:bounces="true"
-				>
-					<view class="category-pills-track">
-						<view
-							v-for="cat in categories"
-							:key="cat.id"
-							class="category-glass-pill"
-							:class="{ 'is-active': activeCategory === cat.id }"
-							@click="handleCategorySelect(cat.id)"
-						>
-							<uni-icons
-								:type="cat.uniIcon"
-								size="13"
-								:color="activeCategory === cat.id ? '#FFFFFF' : '#FF5500'"
-							></uni-icons>
-							<text class="category-pill-label">{{ cat.name }}</text>
-						</view>
-					</view>
-				</scroll-view>
 			</view>
 		</view>
 
@@ -108,9 +80,11 @@
 		</view>
 
 		<!-- ============================================================================
-		     3. 底部 TabBar 物理停靠留白区 (让原生地图物理边界止于 TabBar 上方，App 端 100% 露底展示)
+		     3. 底部 TabBar 物理停靠留白区（仅在 App 端启用以规避原生 map 层级遮挡；H5/小程序端让地图直接铺满至最底端透出液态玻璃）
 		     ============================================================================ -->
+		<!-- #ifdef APP-PLUS -->
 		<view class="tabbar-dock-spacer"></view>
+		<!-- #endif -->
 	</view>
 </template>
 
@@ -122,19 +96,6 @@ import { getNearbyShops, getShopDetail } from '@/api/shop.js'
 const instance = getCurrentInstance()
 let mapCtx = null
 
-/**
- * 1. 顶部分类胶囊配置
- */
-const categories = ref([
-	{ id: 'all', name: '全部美味', uniIcon: 'shop-filled' },
-	{ id: 'hotpot', name: '火锅串串', uniIcon: 'fire-filled' },
-	{ id: 'bbq', name: '地摊烧烤', uniIcon: 'star-filled' },
-	{ id: 'snack', name: '风味小吃', uniIcon: 'medal-filled' },
-	{ id: 'southeast_asia', name: '异域风情', uniIcon: 'gift-filled' },
-	{ id: 'drink', name: '微醺饮品', uniIcon: 'heart-filled' }
-])
-
-const activeCategory = ref('all')
 const searchKeyword = ref('')
 const isSearchFocused = ref(false)
 
@@ -246,7 +207,6 @@ const fetchShopsFromBackend = async (
 			latitude: lat,
 			longitude: lng,
 			radius: 3000,
-			category: activeCategory.value !== 'all' ? activeCategory.value : undefined,
 			keyword: kw || undefined,
 			sort: 'distance',
 			limit: 50
@@ -284,10 +244,6 @@ const visibleShops = computed(() => {
 	const kw = searchKeyword.value.trim().toLowerCase()
 
 	return allShops.value.filter((shop) => {
-		if (activeCategory.value !== 'all' && shop.category !== activeCategory.value) {
-			return false
-		}
-
 		if (kw) {
 			const hitName = (shop.name || '').toLowerCase().includes(kw)
 			const hitDesc = (shop.recommendTitle || '').toLowerCase().includes(kw)
@@ -483,11 +439,6 @@ const resetLocation = (silent = false) => {
 	})
 }
 
-const handleCategorySelect = (catId) => {
-	activeCategory.value = catId
-	fetchShopsFromBackend()
-}
-
 const handleSearchConfirm = async () => {
 	await fetchShopsFromBackend()
 	const kw = searchKeyword.value.trim()
@@ -650,11 +601,16 @@ onMounted(() => {
 	height: 100%;
 }
 
-/* 地图内右下角原生 cover-view 定位按钮（App 端原生地图上方 100% 透出） */
+/* 地图内右下角原生 cover-view 定位按钮（App 端原生地图上方 100% 透出，H5/小程序端悬浮在 TabBar 上方） */
 .map-floating-controls {
 	position: absolute;
 	right: 28rpx;
+	/* #ifdef APP-PLUS */
 	bottom: 24rpx;
+	/* #endif */
+	/* #ifndef APP-PLUS */
+	bottom: calc(env(safe-area-inset-bottom) + 168rpx);
+	/* #endif */
 	display: flex;
 	flex-direction: column;
 	z-index: 50;
@@ -684,7 +640,7 @@ onMounted(() => {
 	position: relative;
 	flex-shrink: 0;
 	z-index: 30;
-	padding: 0 24rpx 16rpx 24rpx;
+	padding: 0 24rpx 20rpx 24rpx;
 	box-sizing: border-box;
 	background: linear-gradient(
 		180deg,
@@ -778,77 +734,13 @@ onMounted(() => {
 	margin-left: 8rpx;
 }
 
-/* 2.3 分类横向滚动胶囊栏（背景透明，单胶囊独立毛玻璃白底） */
-.category-pills-row {
-	margin-top: 14rpx;
-	background: transparent;
-}
-
-.category-scroll {
-	width: 100%;
-	white-space: nowrap;
-	background: transparent;
-}
-
-.category-pills-track {
-	display: inline-flex;
-	align-items: center;
-	gap: 14rpx;
-	padding: 2rpx 2rpx 6rpx 2rpx;
-}
-
-.category-glass-pill {
-	display: inline-flex;
-	align-items: center;
-	height: 58rpx;
-	padding: 0 24rpx;
-	border-radius: 9999rpx;
-	background: rgba(255, 255, 255, 0.90);
-	-webkit-backdrop-filter: blur(12px) saturate(180%);
-	backdrop-filter: blur(12px) saturate(180%);
-	border: 1px solid rgba(255, 255, 255, 0.95);
-	box-shadow: 0 4rpx 14rpx rgba(15, 23, 42, 0.05);
-	flex-shrink: 0;
-	transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1);
-
-	&:active {
-		transform: scale(0.95);
-	}
-
-	&.is-active {
-		background: linear-gradient(135deg, #FF6B2B, #FF4100);
-		border-color: rgba(255, 255, 255, 0.45);
-		box-shadow: 0 6rpx 18rpx rgba(255, 65, 0, 0.34);
-
-		.category-pill-label {
-			color: #FFFFFF;
-			font-weight: 700;
-		}
-	}
-}
-
-.category-pill-label {
-	font-size: 24rpx;
-	font-weight: 600;
-	color: #334155;
-	margin-left: 8rpx;
-	line-height: 1;
-}
-
-/* 底部 TabBar 物理停靠留白区（确保地图物理高度止于 TabBar 之上，App 端 100% 露底呈现） */
+/* 底部 TabBar 物理停靠留白区（仅 App 端生效：纯净透明底，不添加任何多余杂色） */
 .tabbar-dock-spacer {
 	position: relative;
 	width: 100%;
 	height: calc(env(safe-area-inset-bottom) + 148rpx);
 	flex-shrink: 0;
-	background: linear-gradient(
-		180deg,
-		rgba(255, 255, 255, 0.72) 0%,
-		rgba(248, 250, 252, 0.96) 100%
-	);
-	-webkit-backdrop-filter: blur(20px);
-	backdrop-filter: blur(20px);
-	border-top: 1px solid rgba(255, 255, 255, 0.95);
+	background: transparent;
 	box-sizing: border-box;
 	z-index: 10;
 }
