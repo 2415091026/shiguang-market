@@ -203,11 +203,11 @@ const DOCK_CONFIG = {
 	dockHeight: 62,
 	pillInset: 4,
 	// 按住态等比膨胀系数（宽高同时乘以该系数，100% 保持与未按住胶囊相同的宽高比）
-	pressScale: 1.28,
-	// 按住态水滴透镜内图标与文字放大倍率
-	dropletMagnification: 1.24,
-	// 跑道型液态玻璃凸透镜的光学液化折射强度
-	rimRefractionScale: 36,
+	pressScale: 1.22,
+	// 按住态水滴透镜内图标与文字放大倍率（轻度放大，保证图标与文字完整可见不被裁切）
+	dropletMagnification: 1.1,
+	// 仅作用于透镜最外圈的边缘折射强度（过大会把边缘附近的文字推出透镜，造成遮挡）
+	rimRefractionScale: 12,
 	// 点击/松手回弹过渡时长 (ms)
 	moveDuration: 280
 }
@@ -313,7 +313,7 @@ const createRimOnlySphereBmpDataUrl = () => {
 	const halfH = (height - 1) / 2
 	const aspect = width / height
 	const seg = Math.max(0, aspect - 1.0)
-	const flatCore = 0.28
+	const flatCore = 0.74
 
 	for (let y = 0; y < height; y++) {
 		const ny = (y - halfH) / halfH
@@ -381,7 +381,7 @@ const upgradeRimDisplacementWithCanvas = () => {
 		const halfH = (height - 1) / 2
 		const aspect = width / height
 		const seg = Math.max(0, aspect - 1.0)
-		const flatCore = 0.28
+		const flatCore = 0.74
 
 		for (let y = 0; y < height; y++) {
 			const ny = (y - halfH) / halfH
@@ -1124,21 +1124,19 @@ onBeforeUnmount(() => {
 	transition: background 180ms ease, box-shadow 180ms ease, backdrop-filter 180ms ease;
 }
 
-/* 按住/拖动时切换为 3D 液态玻璃水滴透镜（折射底下实时地图与暖橙高亮层） */
+/* 按住/拖动时切换为近乎全透明的液态玻璃水滴（参考图 1：内部清澈不遮挡，仅靠边缘光泽与投影体现体积感） */
 .liquid-dock__morph-lens.is-pressing .liquid-dock__morph-backdrop {
 	background: linear-gradient(
 		180deg,
-		rgba(255, 255, 255, 0.28) 0%,
-		rgba(255, 255, 255, 0.06) 35%,
-		rgba(255, 255, 255, 0.04) 68%,
-		rgba(255, 255, 255, 0.22) 100%
+		rgba(255, 255, 255, 0.10) 0%,
+		rgba(255, 255, 255, 0.02) 45%,
+		rgba(255, 255, 255, 0.06) 100%
 	);
-	-webkit-backdrop-filter: blur(2px) saturate(185%) contrast(1.05) brightness(1.03);
-	backdrop-filter: blur(2px) saturate(185%) contrast(1.05) brightness(1.03);
+	-webkit-backdrop-filter: saturate(160%) brightness(1.04);
+	backdrop-filter: saturate(160%) brightness(1.04);
 	box-shadow:
-		0 10px 26px rgba(15, 23, 42, 0.14),
-		0 3px 8px rgba(15, 23, 42, 0.06),
-		inset 0 0 12px rgba(255, 255, 255, 0.65);
+		0 8px 22px rgba(15, 23, 42, 0.12),
+		0 2px 6px rgba(15, 23, 42, 0.06);
 }
 
 /* 3.2 内部裁剪与边缘弯月面折射舞台 */
@@ -1183,16 +1181,16 @@ onBeforeUnmount(() => {
 }
 
 /* --------------------------------------------------------------------------
- * 3.3 液态玻璃水滴边缘微色散（暖橙、金黄、青色微光泽）与顶部高光胶囊条
+ * 3.3 液态玻璃水滴边缘光泽（参考图 1：仅 1.5px 细边棱镜微色散 + 立体明暗描边，内部完全透明不遮挡）
  * -------------------------------------------------------------------------- */
 
 .liquid-dock__droplet-prism-rim {
 	position: absolute;
-	top: 0.5px;
-	right: 0.5px;
-	bottom: 0.5px;
-	left: 0.5px;
-	padding: 3px;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	left: 0;
+	padding: 1.5px;
 	box-sizing: border-box;
 	border-radius: 9999px;
 	pointer-events: none;
@@ -1201,46 +1199,28 @@ onBeforeUnmount(() => {
 	transition: opacity 160ms ease;
 
 	background: conic-gradient(
-		from 195deg at 50% 50%,
-		rgba(255, 110, 40, 0.30) 0deg,
-		rgba(255, 200, 60, 0.26) 65deg,
-		rgba(0, 210, 255, 0.20) 140deg,
-		rgba(255, 255, 255, 0.45) 215deg,
-		rgba(255, 165, 50, 0.28) 295deg,
-		rgba(255, 110, 40, 0.30) 360deg
+		from 200deg at 50% 50%,
+		rgba(255, 255, 255, 0.95) 0deg,
+		rgba(180, 225, 255, 0.70) 60deg,
+		rgba(255, 255, 255, 0.55) 120deg,
+		rgba(255, 220, 170, 0.60) 190deg,
+		rgba(255, 255, 255, 0.95) 260deg,
+		rgba(200, 235, 255, 0.70) 320deg,
+		rgba(255, 255, 255, 0.95) 360deg
 	);
 	-webkit-mask:
 		linear-gradient(#000 0 0) content-box,
 		linear-gradient(#000 0 0);
 	-webkit-mask-composite: xor;
 	mask-composite: exclude;
-	filter: blur(0.6px);
 }
 
-/* 水滴顶部正中央通透的纯白玻璃高光小胶囊 */
+/* 顶部高光条：参考图 1 无独立高光条，按住态保持隐藏 */
 .liquid-dock__droplet-top-pill-highlight {
-	position: absolute;
-	top: 4px;
-	left: 50%;
-	transform: translateX(-50%);
-	width: 32px;
-	height: 5px;
-	border-radius: 9999px;
-	pointer-events: none;
-	z-index: 5;
-	opacity: 0;
-	transition: opacity 160ms ease;
-
-	background: linear-gradient(
-		180deg,
-		rgba(255, 255, 255, 0.45) 0%,
-		rgba(255, 255, 255, 0.88) 100%
-	);
-	border: 0.8px solid rgba(255, 255, 255, 0.92);
-	box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.95);
+	display: none;
 }
 
-/* 跑道型水滴外圈纯净透明玻璃立体高光与自然明暗内折光（无蓝色阴影） */
+/* 水滴外圈立体明暗描边：顶部亮边 + 底部暗边，内部无任何填充 */
 .liquid-dock__droplet-bevel-ring {
 	position: absolute;
 	top: 0;
@@ -1253,13 +1233,12 @@ onBeforeUnmount(() => {
 	opacity: 0;
 	transition: opacity 160ms ease;
 
-	border: 1px solid rgba(255, 255, 255, 0.92);
 	box-shadow:
-		inset 0 2.5px 4px rgba(255, 255, 255, 0.95),
-		inset 0 -2.5px 4px rgba(15, 23, 42, 0.10),
-		inset 2px 0 4px rgba(255, 255, 255, 0.55),
-		inset -2px 0 4px rgba(255, 255, 255, 0.55),
-		0 0 0 0.5px rgba(15, 23, 42, 0.08);
+		inset 0 1.5px 1.5px rgba(255, 255, 255, 0.85),
+		inset 0 -1.5px 2px rgba(15, 23, 42, 0.10),
+		inset 1.5px 0 2px rgba(255, 255, 255, 0.45),
+		inset -1.5px 0 2px rgba(255, 255, 255, 0.45),
+		0 0 0 0.5px rgba(15, 23, 42, 0.10);
 }
 
 .liquid-dock__morph-lens.is-pressing {
